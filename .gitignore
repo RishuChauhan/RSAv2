@@ -1,0 +1,13 @@
+_pycache__/
+*.pyc
+*.pyo
+*.so
+logs/
+*.log
+*.db
+*.sqlite3
+data/recordings/
+data/*.db
+.DS_Store
+.vscode/
+venv/
