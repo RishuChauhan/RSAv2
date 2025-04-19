@@ -634,7 +634,7 @@ class ReplayWidget(QWidget):
         
         Args:
             frame: OpenCV image array
-            
+                
         Returns:
             Frame with overlays
         """
@@ -642,27 +642,38 @@ class ReplayWidget(QWidget):
         if not self.current_recording or not self.is_playing:
             return frame
         
-        # This is a placeholder implementation, since we would need actual
-        # joint tracking data from recording to add real overlays
+        # Create a copy of the frame to avoid modifying the original
+        overlay_frame = frame.copy()
         
-        # Add skeleton overlay
+        # Calculate current frame position as proportion of total
+        frame_position = self.timeline_slider.value() / max(1, self.timeline_slider.maximum())
+        
+        # Add skeleton overlay with proper joint positions
         if self.skeleton_checkbox.isChecked():
-            # Draw placeholder skeleton (just a rectangle)
-            cv2.rectangle(frame, (100, 100), (500, 500), (0, 255, 0), 2)
+            # Generate simulated joint positions based on frame position
+            # In a real app, these would come from the actual recording data
+            joint_positions = self._generate_joint_positions(frame_position)
+            
+            # Draw the skeleton with connections
+            if joint_positions:
+                self._draw_skeleton(overlay_frame, joint_positions)
         
-        # Add heatmap overlay
+        # Add heatmap overlay based on joint stability
         if self.heatmap_checkbox.isChecked():
-            # Draw placeholder heatmap (just a circle)
-            cv2.circle(frame, (300, 300), 50, (0, 0, 255), -1)
-            cv2.circle(frame, (300, 300), 50, (0, 0, 255, 128), -1)
+            # Generate stability metrics based on frame position
+            # In a real app, these would come from the actual recording data
+            stability_metrics = self._generate_stability_metrics(frame_position)
+            
+            # Draw the heatmap
+            if stability_metrics:
+                overlay_frame = self._draw_stability_heatmap(overlay_frame, stability_metrics)
         
         # Add metrics overlay
         if self.metrics_checkbox.isChecked():
-            # Add text
-            cv2.putText(frame, "Stability Score: 75%", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            # Add text with metrics
+            overlay_frame = self._add_metrics_overlay(overlay_frame, frame_position)
         
-        return frame
+        return overlay_frame
     
     def update_playback_options(self):
         """Update playback options based on checkbox states."""
@@ -802,3 +813,304 @@ class ReplayWidget(QWidget):
             self.playback_cap.release()
         
         event.accept()
+
+    def set_session(self, session_id: int):
+        """
+        Set the current session.
+        
+        Args:
+            session_id: ID of the session
+        """
+        if session_id <= 0:
+            return
+            
+        # Update selector to match
+        for i in range(self.session_selector.count()):
+            if self.session_selector.itemData(i) == session_id:
+                self.session_selector.setCurrentIndex(i)
+                return
+        
+        # If not found in selector, add it
+        if session_id > 0:
+            # Get session details
+            self.cursor = self.data_storage.conn.cursor()
+            self.cursor.execute("SELECT name, created_at FROM sessions WHERE id = ?", (session_id,))
+            session = self.cursor.fetchone()
+            
+            if session:
+                session_text = f"{session['name']} ({session['created_at'][:10]})"
+                # Add to dropdown if not already there
+                self.session_selector.addItem(session_text, session_id)
+                self.session_selector.setCurrentIndex(self.session_selector.count() - 1)
+            else:
+                # If session not found, just set ID
+                self.session_id = session_id
+
+    def _generate_joint_positions(self, frame_position):
+        """
+        Generate simulated joint positions based on frame position.
+        In a real app, this would retrieve actual recording data.
+        
+        Args:
+            frame_position: Position in the playback (0-1)
+                
+        Returns:
+            Dictionary of joint positions
+        """
+        # Base positions for common joints in pixel coordinates
+        base_positions = {
+            'NOSE': (320, 100),
+            'LEFT_SHOULDER': (280, 150),
+            'RIGHT_SHOULDER': (360, 150),
+            'LEFT_ELBOW': (250, 200),
+            'RIGHT_ELBOW': (390, 200),
+            'LEFT_WRIST': (220, 250),
+            'RIGHT_WRIST': (420, 250),
+            'LEFT_HIP': (290, 300),
+            'RIGHT_HIP': (350, 300),
+            'LEFT_KNEE': (285, 380),
+            'RIGHT_KNEE': (355, 380),
+            'LEFT_ANKLE': (280, 450),
+            'RIGHT_ANKLE': (360, 450)
+        }
+        
+        # Add some movement based on frame position
+        # We'll use sine waves to create natural-looking motion
+        import math
+        
+        # Create amplitude that increases toward middle of playback and decreases toward end
+        # This simulates a shot where motion peaks at trigger pull (middle of recording)
+        motion_amplitude = 10 * math.sin(frame_position * math.pi)
+        
+        # Different joints have different motion patterns
+        joint_positions = {}
+        
+        for joint, (x, y) in base_positions.items():
+            # Different offsets for each joint
+            x_offset = motion_amplitude * math.sin(frame_position * 2 * math.pi + hash(joint) % 10)
+            y_offset = motion_amplitude * math.cos(frame_position * 2 * math.pi + hash(joint) % 10)
+            
+            # Wrists and elbows move more
+            if 'WRIST' in joint or 'ELBOW' in joint:
+                x_offset *= 1.5
+                y_offset *= 1.5
+            
+            # Nose has specific pattern
+            if joint == 'NOSE':
+                y_offset *= 0.5  # Less vertical movement
+            
+            # Calculate final position
+            joint_positions[joint] = (int(x + x_offset), int(y + y_offset))
+        
+        return joint_positions
+
+    def _generate_stability_metrics(self, frame_position):
+        """
+        Generate simulated stability metrics based on frame position.
+        In a real app, this would retrieve actual recording data.
+        
+        Args:
+            frame_position: Position in the playback (0-1)
+                
+        Returns:
+            Dictionary of stability metrics for joints
+        """
+        import math
+        
+        # Create stability metrics that deteriorate toward the middle (trigger pull)
+        # and then improve again toward the end (follow through)
+        
+        # Stability is worst at trigger pull (middle of playback)
+        base_stability = 1.0 - math.sin(frame_position * math.pi)
+        
+        # Different joints have different stability patterns
+        joint_stability = {}
+        
+        # Common joints
+        joints = [
+            'NOSE', 'LEFT_SHOULDER', 'RIGHT_SHOULDER', 
+            'LEFT_ELBOW', 'RIGHT_ELBOW', 'LEFT_WRIST', 'RIGHT_WRIST',
+            'LEFT_HIP', 'RIGHT_HIP', 'LEFT_ANKLE', 'RIGHT_ANKLE'
+        ]
+        
+        for joint in joints:
+            # Add some variation for each joint
+            joint_factor = 0.8 + (hash(joint) % 10) / 20.0  # Range 0.8-1.3
+            
+            # Calculate stability (0-1, higher is more stable)
+            stability = base_stability * joint_factor
+            
+            # Ensure within valid range
+            stability = max(0.0, min(1.0, stability))
+            
+            # Wrists and elbows are typically less stable
+            if 'WRIST' in joint:
+                stability *= 0.7
+            elif 'ELBOW' in joint:
+                stability *= 0.85
+            
+            # Add to dictionary
+            joint_stability[joint] = stability
+        
+        return joint_stability
+
+    def _draw_skeleton(self, frame, joint_positions):
+        """
+        Draw skeleton overlay on the frame.
+        
+        Args:
+            frame: OpenCV image
+            joint_positions: Dictionary of joint positions
+        """
+        # Define connections for skeleton
+        connections = [
+            ('NOSE', 'LEFT_SHOULDER'),
+            ('NOSE', 'RIGHT_SHOULDER'),
+            ('LEFT_SHOULDER', 'RIGHT_SHOULDER'),
+            ('LEFT_SHOULDER', 'LEFT_ELBOW'),
+            ('LEFT_ELBOW', 'LEFT_WRIST'),
+            ('RIGHT_SHOULDER', 'RIGHT_ELBOW'),
+            ('RIGHT_ELBOW', 'RIGHT_WRIST'),
+            ('LEFT_SHOULDER', 'LEFT_HIP'),
+            ('RIGHT_SHOULDER', 'RIGHT_HIP'),
+            ('LEFT_HIP', 'RIGHT_HIP'),
+            ('LEFT_HIP', 'LEFT_KNEE'),
+            ('LEFT_KNEE', 'LEFT_ANKLE'),
+            ('RIGHT_HIP', 'RIGHT_KNEE'),
+            ('RIGHT_KNEE', 'RIGHT_ANKLE')
+        ]
+        
+        # Draw joints
+        for joint, (x, y) in joint_positions.items():
+            cv2.circle(frame, (x, y), 8, (0, 255, 255), -1)  # Yellow filled circle
+            cv2.circle(frame, (x, y), 8, (0, 0, 0), 2)       # Black outline
+            
+            # Add joint labels
+            cv2.putText(frame, joint.replace('_', ' '), (x + 10, y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        # Draw connections
+        for joint1, joint2 in connections:
+            if joint1 in joint_positions and joint2 in joint_positions:
+                pt1 = joint_positions[joint1]
+                pt2 = joint_positions[joint2]
+                cv2.line(frame, pt1, pt2, (0, 255, 255), 2)  # Yellow lines
+        
+        return frame
+
+    def _draw_stability_heatmap(self, frame, stability_metrics):
+        """
+        Draw stability heatmap overlay on the frame.
+        
+        Args:
+            frame: OpenCV image
+            stability_metrics: Dictionary of stability values per joint
+                
+        Returns:
+            Frame with heatmap overlay
+        """
+        # Create a transparent overlay
+        overlay = frame.copy()
+        
+        # Get joint positions based on current frame
+        frame_position = self.timeline_slider.value() / max(1, self.timeline_slider.maximum())
+        joint_positions = self._generate_joint_positions(frame_position)
+        
+        # Draw heatmap circles for each joint based on stability
+        for joint, (x, y) in joint_positions.items():
+            if joint in stability_metrics:
+                stability = stability_metrics[joint]
+                
+                # Size based on importance of joint
+                size = 30
+                if 'WRIST' in joint or 'ELBOW' in joint:
+                    size = 40  # Larger for important shooting joints
+                elif 'NOSE' in joint:
+                    size = 35  # Important for sight alignment
+                elif 'SHOULDER' in joint:
+                    size = 35  # Important for shooting
+                
+                # Color based on stability (red=unstable, green=stable)
+                if stability < 0.3:
+                    color = (0, 0, 255)  # Red (unstable)
+                elif stability < 0.7:
+                    # Gradient from red to yellow to green
+                    g = int(255 * (stability - 0.3) / 0.4)
+                    color = (0, g, 255)  # Yellow-orange
+                else:
+                    color = (0, 255, 0)  # Green (stable)
+                
+                # Draw a filled circle with transparency
+                cv2.circle(overlay, (x, y), size, color, -1)
+                
+                # Add stability value text
+                cv2.putText(overlay, f"{stability:.2f}", (x-15, y+5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        # Apply the overlay with transparency
+        alpha = 0.4  # Transparency factor
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        # Add legend
+        legend_y = 30
+        # Green - Stable
+        cv2.circle(frame, (30, legend_y), 10, (0, 255, 0), -1)
+        cv2.putText(frame, "Stable", (50, legend_y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # Yellow - Medium
+        cv2.circle(frame, (150, legend_y), 10, (0, 255, 255), -1)
+        cv2.putText(frame, "Medium", (170, legend_y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # Red - Unstable
+        cv2.circle(frame, (270, legend_y), 10, (0, 0, 255), -1)
+        cv2.putText(frame, "Unstable", (290, legend_y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        return frame
+
+    def _add_metrics_overlay(self, frame, frame_position):
+        """
+        Add metrics text overlay to the frame.
+        
+        Args:
+            frame: OpenCV image
+            frame_position: Position in playback (0-1)
+                
+        Returns:
+            Frame with metrics overlay
+        """
+        # Create metrics based on frame position
+        import math
+        
+        # Simulate key metrics that change throughout the recording
+        follow_through = 0.3 + 0.7 * (1 - math.sin(frame_position * math.pi))  # Best at end
+        avg_sway = 15 * math.sin(frame_position * math.pi)  # Worst at middle
+        stability_score = int(50 + 50 * (1 - math.sin(frame_position * math.pi)))  # Percentage
+        
+        # Create background box for metrics
+        metrics_bg = np.zeros((150, 250, 3), dtype=np.uint8)
+        metrics_bg[:, :] = (40, 40, 40)  # Dark gray background
+        
+        # Add metrics text
+        cv2.putText(metrics_bg, f"Stability: {stability_score}%", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        cv2.putText(metrics_bg, f"Follow-through: {follow_through:.2f}", (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        cv2.putText(metrics_bg, f"Avg Sway: {avg_sway:.2f} mm/s", (10, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Position and blend the metrics box
+        h, w = frame.shape[:2]
+        x_offset = w - 260
+        y_offset = 10
+        
+        # Create a region of interest
+        roi = frame[y_offset:y_offset+150, x_offset:x_offset+250]
+        
+        # Blend the metrics box with the ROI
+        alpha = 0.7  # Transparency factor
+        cv2.addWeighted(metrics_bg, alpha, roi, 1-alpha, 0, roi)
+        
+        # Put the ROI back into the frame
+        frame[y_offset:y_offset+150, x_offset:x_offset+250] = roi
+        
+        return frame

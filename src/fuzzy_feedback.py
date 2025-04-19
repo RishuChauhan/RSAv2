@@ -10,101 +10,101 @@ class FuzzyFeedback:
     """
     
     def __init__(self):
-        """Initialize the fuzzy feedback system with membership functions and rules."""
-        # Create fuzzy variables
+        """Initialize the fuzzy feedback system with improved membership functions and rules."""
+        # Create fuzzy variables with better defined parameters
         self.setup_fuzzy_system()
         
-        # Feedback message templates
+        # Improved feedback message templates for professionals
         self.feedback_templates = {
             'wrist_stability': [
-                "Stabilize your wrist.",
-                "Keep your wrist steady.",
-                "Focus on wrist support."
+                "Focus on stabilizing your wrist position.",
+                "Maintain consistent wrist alignment through trigger pull.",
+                "Reduce wrist movement for improved shot consistency."
             ],
             'elbow_stability': [
-                "Control your elbow movement.",
-                "Keep your support arm steady.",
-                "Minimize elbow motion."
+                "Maintain stable elbow position to support your aim.",
+                "Control support arm motion through trigger pull.",
+                "Minimize elbow drift for better accuracy."
             ],
             'stance': [
-                "Center your stance.",
-                "Balance your weight evenly.",
-                "Maintain a stable base."
+                "Adjust stance to maintain optimal center of gravity.",
+                "Distribute weight evenly for improved stability.",
+                "Establish a more stable base position."
             ],
             'head_position': [
-                "Keep your head steady.",
-                "Maintain consistent cheek weld.",
-                "Minimize head movement."
+                "Maintain consistent cheek weld and head position.",
+                "Reduce head movement to stabilize sight picture.",
+                "Keep head position fixed relative to sight alignment."
             ],
             'follow_through': [
-                "Excellent follow-through.",
-                "Maintain position after trigger break.",
-                "Good stability through shot."
+                "Excellent follow-through maintaining sight alignment.",
+                "Maintain position through recoil for optimal performance.",
+                "Good shot execution with proper follow-through technique."
             ],
             'general_posture': [
-                "Maintain consistent posture.",
-                "Keep your body aligned.",
-                "Control your breathing and posture."
+                "Optimize overall body alignment for better stability.",
+                "Maintain consistent body position through your shot cycle.",
+                "Control breathing and posture for improved accuracy."
             ]
         }
-    
+
     def setup_fuzzy_system(self):
-        """Set up the fuzzy control system with variables, membership functions, and rules."""
+        """Set up the fuzzy control system with improved variables, membership functions, and rules."""
         # Define fuzzy variables (universes of discourse)
         
-        # Sway velocities for different joints (mm/s)
-        wrist_sway = ctrl.Antecedent(np.arange(0, 21, 1), 'wrist_sway')
-        elbow_sway = ctrl.Antecedent(np.arange(0, 21, 1), 'elbow_sway')
-        nose_sway = ctrl.Antecedent(np.arange(0, 21, 1), 'nose_sway')
+        # Sway velocities for different joints (mm/s) - adjusted ranges for better precision
+        wrist_sway = ctrl.Antecedent(np.arange(0, 21, 0.5), 'wrist_sway')
+        elbow_sway = ctrl.Antecedent(np.arange(0, 21, 0.5), 'elbow_sway')
+        nose_sway = ctrl.Antecedent(np.arange(0, 21, 0.5), 'nose_sway')
         
-        # Postural stability (px)
-        hip_dev_x = ctrl.Antecedent(np.arange(0, 31, 1), 'hip_dev_x')
-        nose_dev_y = ctrl.Antecedent(np.arange(0, 31, 1), 'nose_dev_y')
+        # Postural stability (px) - adjusted ranges
+        hip_dev_x = ctrl.Antecedent(np.arange(0, 31, 0.5), 'hip_dev_x')
+        nose_dev_y = ctrl.Antecedent(np.arange(0, 31, 0.5), 'nose_dev_y')
         
-        # Follow-through score (0-1)
-        follow_through = ctrl.Antecedent(np.arange(0, 1.1, 0.1), 'follow_through')
+        # Follow-through score (0-1) - finer granularity
+        follow_through = ctrl.Antecedent(np.arange(0, 1.01, 0.01), 'follow_through')
         
-        # Output variable: feedback score (0-100)
+        # Output variable: feedback score (0-100) - finer granularity
         feedback_score = ctrl.Consequent(np.arange(0, 101, 1), 'feedback_score')
         
-        # Define membership functions for inputs
+        # Define membership functions for inputs with better calibrated ranges for professional shooters
         
-        # Sway velocities
-        wrist_sway['low'] = fuzz.trapmf(wrist_sway.universe, [0, 0, 3, 6])
-        wrist_sway['medium'] = fuzz.trimf(wrist_sway.universe, [4, 7, 11])
-        wrist_sway['high'] = fuzz.trapmf(wrist_sway.universe, [9, 12, 20, 20])
+        # Sway velocities - refined thresholds based on professional performance
+        wrist_sway['low'] = fuzz.trapmf(wrist_sway.universe, [0, 0, 2, 5])
+        wrist_sway['medium'] = fuzz.trimf(wrist_sway.universe, [3, 6, 10])
+        wrist_sway['high'] = fuzz.trapmf(wrist_sway.universe, [8, 12, 20, 20])
         
-        elbow_sway['low'] = fuzz.trapmf(elbow_sway.universe, [0, 0, 2, 5])
-        elbow_sway['medium'] = fuzz.trimf(elbow_sway.universe, [3, 6, 10])
-        elbow_sway['high'] = fuzz.trapmf(elbow_sway.universe, [8, 11, 20, 20])
+        elbow_sway['low'] = fuzz.trapmf(elbow_sway.universe, [0, 0, 1.5, 4])
+        elbow_sway['medium'] = fuzz.trimf(elbow_sway.universe, [2.5, 5, 9])
+        elbow_sway['high'] = fuzz.trapmf(elbow_sway.universe, [7, 10, 20, 20])
         
-        nose_sway['low'] = fuzz.trapmf(nose_sway.universe, [0, 0, 1, 3])
-        nose_sway['medium'] = fuzz.trimf(nose_sway.universe, [2, 4, 7])
-        nose_sway['high'] = fuzz.trapmf(nose_sway.universe, [6, 8, 20, 20])
+        nose_sway['low'] = fuzz.trapmf(nose_sway.universe, [0, 0, 0.8, 2.5])
+        nose_sway['medium'] = fuzz.trimf(nose_sway.universe, [1.5, 3.5, 6])
+        nose_sway['high'] = fuzz.trapmf(nose_sway.universe, [5, 7, 20, 20])
         
-        # Postural stability
-        hip_dev_x['low'] = fuzz.trapmf(hip_dev_x.universe, [0, 0, 5, 10])
-        hip_dev_x['medium'] = fuzz.trimf(hip_dev_x.universe, [7, 12, 18])
-        hip_dev_x['high'] = fuzz.trapmf(hip_dev_x.universe, [15, 20, 30, 30])
+        # Postural stability - refined thresholds
+        hip_dev_x['low'] = fuzz.trapmf(hip_dev_x.universe, [0, 0, 4, 8])
+        hip_dev_x['medium'] = fuzz.trimf(hip_dev_x.universe, [6, 10, 16])
+        hip_dev_x['high'] = fuzz.trapmf(hip_dev_x.universe, [14, 18, 30, 30])
         
-        nose_dev_y['low'] = fuzz.trapmf(nose_dev_y.universe, [0, 0, 3, 7])
-        nose_dev_y['medium'] = fuzz.trimf(nose_dev_y.universe, [5, 9, 14])
-        nose_dev_y['high'] = fuzz.trapmf(nose_dev_y.universe, [12, 16, 30, 30])
+        nose_dev_y['low'] = fuzz.trapmf(nose_dev_y.universe, [0, 0, 2, 6])
+        nose_dev_y['medium'] = fuzz.trimf(nose_dev_y.universe, [4, 8, 12])
+        nose_dev_y['high'] = fuzz.trapmf(nose_dev_y.universe, [10, 14, 30, 30])
         
-        # Follow-through score
-        follow_through['poor'] = fuzz.trapmf(follow_through.universe, [0, 0, 0.3, 0.5])
-        follow_through['average'] = fuzz.trimf(follow_through.universe, [0.4, 0.6, 0.8])
-        follow_through['excellent'] = fuzz.trapmf(follow_through.universe, [0.7, 0.85, 1, 1])
+        # Follow-through score - more precise thresholds for professionals
+        follow_through['poor'] = fuzz.trapmf(follow_through.universe, [0, 0, 0.25, 0.45])
+        follow_through['average'] = fuzz.trimf(follow_through.universe, [0.35, 0.55, 0.75])
+        follow_through['excellent'] = fuzz.trapmf(follow_through.universe, [0.65, 0.8, 1, 1])
         
-        # Define membership functions for output
-        feedback_score['poor'] = fuzz.trapmf(feedback_score.universe, [0, 0, 30, 45])
-        feedback_score['average'] = fuzz.trimf(feedback_score.universe, [35, 50, 70])
+        # Define membership functions for output with better calibration
+        feedback_score['poor'] = fuzz.trapmf(feedback_score.universe, [0, 0, 25, 40])
+        feedback_score['average'] = fuzz.trimf(feedback_score.universe, [30, 50, 70])
         feedback_score['good'] = fuzz.trimf(feedback_score.universe, [60, 75, 90])
         feedback_score['excellent'] = fuzz.trapmf(feedback_score.universe, [80, 90, 100, 100])
         
-        # Define fuzzy rules
+        # Define improved fuzzy rules with better weighting for professionals
         
-        # Rule 1: Wrist and elbow stability
+        # Rule 1: Wrist and elbow stability (critical for shooting)
         rule1 = ctrl.Rule(
             wrist_sway['high'] | elbow_sway['high'],
             feedback_score['poor']
@@ -116,13 +116,13 @@ class FuzzyFeedback:
             feedback_score['average']
         )
         
-        # Rule 3: Head position
+        # Rule 3: Head position (critical for sight alignment)
         rule3 = ctrl.Rule(
             nose_dev_y['medium'] | nose_dev_y['high'] | nose_sway['high'],
             feedback_score['average']
         )
         
-        # Rule 4: Good follow-through
+        # Rule 4: Good follow-through (essential for accuracy)
         rule4 = ctrl.Rule(
             follow_through['excellent'] & nose_sway['low'] & wrist_sway['low'],
             feedback_score['excellent']
@@ -142,16 +142,36 @@ class FuzzyFeedback:
             feedback_score['good']
         )
         
-        # Rule 7: Excellent stability
+        # Rule 7: Excellent stability (professional level)
         rule7 = ctrl.Rule(
             (wrist_sway['low'] & elbow_sway['low'] & nose_sway['low'] & 
-             hip_dev_x['low'] & nose_dev_y['low'] & follow_through['excellent']),
+            hip_dev_x['low'] & nose_dev_y['low'] & follow_through['excellent']),
             feedback_score['excellent']
         )
         
-        # Create control system
+        # Additional rules for professional-level feedback
+        
+        # Rule 8: Prioritize wrist stability over elbow
+        rule8 = ctrl.Rule(
+            (wrist_sway['low'] & elbow_sway['medium'] & follow_through['average']),
+            feedback_score['good']
+        )
+        
+        # Rule 9: Head stability is critical
+        rule9 = ctrl.Rule(
+            (nose_sway['low'] & nose_dev_y['low'] & follow_through['average']),
+            feedback_score['good']
+        )
+        
+        # Rule 10: Poor follow-through even with good stability is problematic
+        rule10 = ctrl.Rule(
+            (wrist_sway['low'] & elbow_sway['low'] & follow_through['poor']),
+            feedback_score['average']
+        )
+        
+        # Create control system with all rules
         self.feedback_ctrl = ctrl.ControlSystem([
-            rule1, rule2, rule3, rule4, rule5, rule6, rule7
+            rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule10
         ])
         
         # Create simulator
@@ -217,52 +237,66 @@ class FuzzyFeedback:
     
     def _generate_text_feedback(self, metrics: Dict) -> str:
         """
-        Generate text feedback based on metrics and fuzzy rules.
+        Generate professional-level text feedback based on metrics and fuzzy rules.
         
         Args:
             metrics: Dictionary containing stability metrics
             
         Returns:
-            Text feedback string
+            Text feedback string with professional terminology
         """
         feedback_items = []
         
-        # Check wrist stability
+        # Extract key metrics with proper validation
         wrist_sway = (metrics.get('sway_velocity', {}).get('LEFT_WRIST', 0) +
-                      metrics.get('sway_velocity', {}).get('RIGHT_WRIST', 0)) / 2
-        if wrist_sway > 9:  # High wrist sway
-            feedback_items.append(np.random.choice(self.feedback_templates['wrist_stability']))
+                    metrics.get('sway_velocity', {}).get('RIGHT_WRIST', 0)) / 2
         
-        # Check elbow stability
         elbow_sway = (metrics.get('sway_velocity', {}).get('LEFT_ELBOW', 0) +
-                      metrics.get('sway_velocity', {}).get('RIGHT_ELBOW', 0)) / 2
-        if elbow_sway > 8:  # High elbow sway
-            feedback_items.append(np.random.choice(self.feedback_templates['elbow_stability']))
+                    metrics.get('sway_velocity', {}).get('RIGHT_ELBOW', 0)) / 2
         
-        # Check stance (hip deviation)
-        hip_dev_x = metrics.get('dev_x', {}).get('HIPS', 0)
-        if hip_dev_x > 7:  # Medium or high hip deviation
-            feedback_items.append(np.random.choice(self.feedback_templates['stance']))
-        
-        # Check head position
-        nose_dev_y = metrics.get('dev_y', {}).get('NOSE', 0)
         nose_sway = metrics.get('sway_velocity', {}).get('NOSE', 0)
-        if nose_dev_y > 5 or nose_sway > 6:  # Medium or high nose deviation/sway
-            feedback_items.append(np.random.choice(self.feedback_templates['head_position']))
-        
-        # Check follow-through
+        hip_dev_x = metrics.get('dev_x', {}).get('HIPS', 0)
+        nose_dev_y = metrics.get('dev_y', {}).get('NOSE', 0)
         follow_through = metrics.get('follow_through_score', 0)
-        if follow_through > 0.7 and wrist_sway < 6 and nose_sway < 3:  # Excellent follow-through
+        
+        # Priority-based feedback system (professionals care about the most important issues first)
+        
+        # Check follow-through (high priority for professionals)
+        if follow_through < 0.35:  # Poor follow-through
+            feedback_items.append(f"Focus on follow-through: maintain position after trigger break.")
+        elif follow_through > 0.7 and wrist_sway < 6 and nose_sway < 3:  # Excellent follow-through
             feedback_items.append(np.random.choice(self.feedback_templates['follow_through']))
         
-        # If no specific issues, give general feedback
+        # Check head position (high priority)
+        if nose_dev_y > 5 or nose_sway > 5:  # Significant head movement
+            feedback_items.append(np.random.choice(self.feedback_templates['head_position']))
+        
+        # Check wrist stability (high priority for precision)
+        if wrist_sway > 8:  # High wrist sway
+            feedback_items.append(np.random.choice(self.feedback_templates['wrist_stability']))
+        
+        # Check elbow stability (medium priority)
+        if elbow_sway > 7:  # High elbow sway
+            feedback_items.append(np.random.choice(self.feedback_templates['elbow_stability']))
+        
+        # Check stance (medium priority)
+        if hip_dev_x > 6:  # Medium or high hip deviation
+            feedback_items.append(np.random.choice(self.feedback_templates['stance']))
+        
+        # If performance is excellent across the board, provide positive reinforcement
+        if (follow_through > 0.7 and wrist_sway < 4 and elbow_sway < 4 and 
+            nose_sway < 3 and hip_dev_x < 5 and nose_dev_y < 4):
+            feedback_items = ["Excellent shot execution. Maintain this stability and follow-through."]
+        
+        # If no specific feedback generated, give general guidance
         if not feedback_items:
             feedback_items.append(np.random.choice(self.feedback_templates['general_posture']))
         
-        # Return combined feedback, limited to 2 items to keep it concise
+        # Limit to 2 most important feedback items to keep it concise and actionable
         if len(feedback_items) > 2:
             feedback_items = feedback_items[:2]
         
+        # Join feedback items with proper spacing
         return ' '.join(feedback_items)
     
     def update_membership_functions(self, config: Dict):

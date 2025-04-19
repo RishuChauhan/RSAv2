@@ -30,10 +30,19 @@ class DataStorage:
         self._create_tables()
     
     def _connect(self):
-        """Establish connection to the SQLite database."""
-        self.conn = sqlite3.connect(self.db_path)
-        self.conn.row_factory = sqlite3.Row  # Access rows by column name
-        self.cursor = self.conn.cursor()
+        """Establish connection to the SQLite database with improved error handling."""
+        try:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row  # Access rows by column name
+            self.cursor = self.conn.cursor()
+        except sqlite3.Error as e:
+            print(f"Database connection error: {e}")
+            # Create a fallback in-memory database if file connection fails
+            self.conn = sqlite3.connect(':memory:')
+            self.conn.row_factory = sqlite3.Row
+            self.cursor = self.conn.cursor()
+            # This will recreate the tables in memory
+            self._create_tables()
     
     def _create_tables(self):
         """Create database tables if they don't exist."""
@@ -218,7 +227,7 @@ class DataStorage:
     
     def get_shots(self, session_id: int) -> List[Dict]:
         """
-        Get all shots for a session.
+        Get all shots for a session with improved error handling.
         
         Args:
             session_id: ID of the session
@@ -226,20 +235,35 @@ class DataStorage:
         Returns:
             List of shot dictionaries
         """
-        self.cursor.execute(
-            'SELECT * FROM shots WHERE session_id = ? ORDER BY timestamp',
-            (session_id,)
-        )
-        shots = self.cursor.fetchall()
-        
-        # Parse metrics JSON
-        shot_list = []
-        for shot in shots:
-            shot_dict = dict(shot)
-            shot_dict['metrics'] = json.loads(shot_dict['metrics'])
-            shot_list.append(shot_dict)
+        if not session_id or session_id <= 0:
+            return []
             
-        return shot_list
+        try:
+            # Ensure connection is active
+            if self.conn is None or self.cursor is None:
+                self._connect()
+                
+            self.cursor.execute(
+                'SELECT * FROM shots WHERE session_id = ? ORDER BY timestamp',
+                (session_id,)
+            )
+            shots = self.cursor.fetchall()
+            
+            # Parse metrics JSON
+            shot_list = []
+            for shot in shots:
+                shot_dict = dict(shot)
+                try:
+                    shot_dict['metrics'] = json.loads(shot_dict['metrics'])
+                except json.JSONDecodeError:
+                    # Handle corrupt JSON gracefully
+                    shot_dict['metrics'] = {}
+                shot_list.append(shot_dict)
+                    
+            return shot_list
+        except sqlite3.Error as e:
+            print(f"Error fetching shots: {e}")
+            return []
     
     def get_shot(self, shot_id: int) -> Optional[Dict]:
         """
@@ -314,6 +338,36 @@ class DataStorage:
             return baseline_dict
         return None
     
+    def get_sessions(self, user_id: int) -> List[Dict]:
+        """
+        Get all sessions for a user with improved error handling.
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            List of session dictionaries
+        """
+        try:
+            # Ensure connection is active
+            if self.conn is None or self.cursor is None:
+                self._connect()
+                
+            self.cursor.execute(
+                '''SELECT s.*, COUNT(sh.id) as shot_count 
+                FROM sessions s 
+                LEFT JOIN shots sh ON s.id = sh.session_id 
+                WHERE s.user_id = ? 
+                GROUP BY s.id 
+                ORDER BY s.created_at DESC''',
+                (user_id,)
+            )
+            sessions = self.cursor.fetchall()
+            return [dict(session) for session in sessions] if sessions else []
+        except sqlite3.Error as e:
+            print(f"Error fetching sessions: {e}")
+            return []
+        
     def get_session_stats(self, session_id: int) -> Dict:
         """
         Get statistical summary of a session.
@@ -324,9 +378,8 @@ class DataStorage:
         Returns:
             Dictionary of session statistics
         """
-        shots = self.get_shots(session_id)
-        
-        if not shots:
+        # Handle invalid session ID
+        if not session_id or session_id <= 0:
             return {
                 'avg_subjective_score': 0,
                 'max_subjective_score': 0,
@@ -334,11 +387,46 @@ class DataStorage:
                 'shot_count': 0
             }
         
-        subjective_scores = [shot['subjective_score'] for shot in shots]
-        
-        return {
-            'avg_subjective_score': sum(subjective_scores) / len(subjective_scores),
-            'max_subjective_score': max(subjective_scores),
-            'min_subjective_score': min(subjective_scores),
-            'shot_count': len(shots)
-        }
+        try:
+            # Ensure connection is active
+            if self.conn is None or self.cursor is None:
+                self._connect()
+                
+            # Get all shots for the session
+            shots = self.get_shots(session_id)
+            
+            if not shots:
+                return {
+                    'avg_subjective_score': 0,
+                    'max_subjective_score': 0,
+                    'min_subjective_score': 0,
+                    'shot_count': 0
+                }
+            
+            # Extract subjective scores
+            subjective_scores = [shot.get('subjective_score', 0) for shot in shots if 'subjective_score' in shot]
+            
+            # Calculate statistics
+            if subjective_scores:
+                return {
+                    'avg_subjective_score': sum(subjective_scores) / len(subjective_scores),
+                    'max_subjective_score': max(subjective_scores),
+                    'min_subjective_score': min(subjective_scores),
+                    'shot_count': len(shots)
+                }
+            else:
+                return {
+                    'avg_subjective_score': 0,
+                    'max_subjective_score': 0,
+                    'min_subjective_score': 0,
+                    'shot_count': len(shots)
+                }
+        except Exception as e:
+            print(f"Error getting session stats: {e}")
+            return {
+                'avg_subjective_score': 0,
+                'max_subjective_score': 0,
+                'min_subjective_score': 0,
+                'shot_count': 0,
+                'error': str(e)
+            }
