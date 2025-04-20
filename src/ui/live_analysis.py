@@ -877,32 +877,82 @@ class LiveAnalysisWidget(QWidget):
         
         # Get joint history for the shot
         joint_history = self.joint_tracker.get_joint_history()
-        shot_time = getattr(self, 'last_shot_time', time.time())
-
+        
         if not joint_history:
             QMessageBox.warning(self, "No Data", "No joint tracking data available.")
             return
         
+        # Debug: Print joint history length
+        print(f"Joint history length: {len(joint_history)}")
+        
+        # Get the current time for shot time parameter
+        current_time = time.time()
+        
         # Calculate metrics for the shot
         sway_velocities = self.stability_metrics.calculate_sway_velocity(joint_history)
         dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
-        follow_through = self.stability_metrics.calculate_follow_through_score(joint_history, shot_time)
+        
+        # Fix: Add shot_time parameter
+        follow_through = self.stability_metrics.calculate_follow_through_score(
+            joint_history, 
+            shot_time=current_time,  # Pass current time as shot_time
+            post_window=1.0
+        )
+        
+        # Extract ONLY the current joint positions from the latest frame
+        current_joint_positions = {}
+        if joint_history and len(joint_history) > 0 and 'joints' in joint_history[-1]:
+            current_joint_positions = joint_history[-1]['joints']
+            print(f"Captured positions for joints: {list(current_joint_positions.keys())}")
+        else:
+            print("WARNING: No joint positions found in latest frame")
         
         # Combine metrics
         metrics = {
             'sway_velocity': sway_velocities,
             'dev_x': dev_x,
             'dev_y': dev_y,
-            'follow_through_score': follow_through
+            'follow_through_score': follow_through,
+            'joint_positions': current_joint_positions  # Store exact position at shot time
         }
         
-        # Ask for subjective score
-        score, ok = QInputDialog.getInt(
-            self, "Shot Recorded", "Enter subjective score (1-10):",
-            value=7, min=1, max=10
-        )
+        # Use a custom dialog for decimal score entry
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDoubleSpinBox
         
-        if ok:
+        score_dialog = QDialog(self)
+        score_dialog.setWindowTitle("Shot Recorded")
+        score_dialog.setFixedWidth(300)
+        
+        layout = QVBoxLayout()
+        
+        # Add label
+        layout.addWidget(QLabel("Enter score (0.00-10.9):"))
+        
+        # Create double spin box for decimal scores
+        score_spinner = QDoubleSpinBox()
+        score_spinner.setRange(0.0, 10.9)
+        score_spinner.setDecimals(1)  # Allow one decimal place
+        score_spinner.setSingleStep(0.1)
+        score_spinner.setValue(10.9)  # Default to 10.9
+        layout.addWidget(score_spinner)
+        
+        # Add buttons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(score_dialog.reject)
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(score_dialog.accept)
+        ok_button.setDefault(True)
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+        
+        score_dialog.setLayout(layout)
+        
+        if score_dialog.exec() == QDialog.DialogCode.Accepted:
+            score = score_spinner.value()
+            
             # Store shot data
             shot_id = self.data_storage.store_shot(self.session_id, metrics, score)
             

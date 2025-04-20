@@ -124,7 +124,7 @@ class DashboardWidget(QWidget):
         self.shots_table = QTableWidget()
         self.shots_table.setColumnCount(7)  # Added one column for export checkbox
         self.shots_table.setHorizontalHeaderLabels([
-            "Select", "Shot #", "Timestamp", "Subjective Score", 
+            "Select", "Shot #", "Timestamp", "Score", 
             "Follow-through", "Sway Velocity", "Postural Stability"
         ])
         
@@ -418,7 +418,7 @@ class DashboardWidget(QWidget):
         ax = self.score_fig.add_subplot(111)
         
         # Plot data with improved styling
-        ax.plot(shot_numbers, subjective_scores, 'b-', marker='o', label='Subjective Score',
+        ax.plot(shot_numbers, subjective_scores, 'b-', marker='o', label='Shot Score',
                 color='#1976D2', linewidth=2, markersize=8, alpha=0.8)
         
         ax.plot(shot_numbers, follow_through_scores, 'g--', marker='s', label='Follow-through (×10)',

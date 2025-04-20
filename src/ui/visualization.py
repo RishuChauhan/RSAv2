@@ -1,7 +1,8 @@
+from __future__ import print_function
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QListWidget, QListWidgetItem, QSplitter,
-    QGroupBox, QGridLayout, QCheckBox
+    QGroupBox, QGridLayout, QCheckBox, QSizePolicy, QSlider
 )
 from PyQt6.QtCore import Qt, QSize
 
@@ -9,7 +10,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D
-
+import traceback
+import sys
 import numpy as np
 from typing import Dict, List, Optional
 
@@ -33,9 +35,13 @@ class VisualizationWidget(QWidget):
         self.user_id = None
         self.session_id = None
         
+        # Flag to track if the widget is closing - add this BEFORE calling any methods
+        self._is_closing = False
+        
         # Currently selected shots
         self.selected_shots = []
-        
+
+        self.skeleton_rotation_angle = 0 
         # Joint visibility settings
         self.joint_visibility = {
             'SHOULDERS': True,
@@ -46,7 +52,10 @@ class VisualizationWidget(QWidget):
             'ANKLES': False
         }
         
-        # Initialize UI
+        # Initialize matplotlib objects
+        self._create_matplotlib_figure()
+        
+        # Then initialize UI
         self.init_ui()
     
     def init_ui(self):
@@ -72,6 +81,23 @@ class VisualizationWidget(QWidget):
         self.reset_view_button.clicked.connect(self.reset_3d_view)
         control_layout.addWidget(self.reset_view_button)
         
+        # Add rotation buttons that will rotate the data
+        self.front_view_button = QPushButton("Front View")
+        self.front_view_button.clicked.connect(lambda: self.rotate_skeleton(0))
+        control_layout.addWidget(self.front_view_button)
+        
+        self.left_view_button = QPushButton("Left View")
+        self.left_view_button.clicked.connect(lambda: self.rotate_skeleton(90))
+        control_layout.addWidget(self.left_view_button)
+        
+        self.back_view_button = QPushButton("Back View")
+        self.back_view_button.clicked.connect(lambda: self.rotate_skeleton(180))
+        control_layout.addWidget(self.back_view_button)
+        
+        self.right_view_button = QPushButton("Right View")
+        self.right_view_button.clicked.connect(lambda: self.rotate_skeleton(270))
+        control_layout.addWidget(self.right_view_button)
+        
         main_layout.addLayout(control_layout)
         
         # Main content splitter (shots list, 3D view, and options)
@@ -95,36 +121,51 @@ class VisualizationWidget(QWidget):
         
         shots_widget.setLayout(shots_layout)
         main_splitter.addWidget(shots_widget)
-        
-        # Middle: 3D visualization
+
+       # Middle: 3D visualization 
         viz_widget = QWidget()
         viz_layout = QVBoxLayout()
+
+        viz_layout.addWidget(self.canvas, stretch=3)
+
+        self.canvas_parent_layout = viz_layout
+        self.old_canvas = self.canvas
+
+        self.canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding, 
+            QSizePolicy.Policy.Expanding
+        )
+        self.canvas.setMinimumHeight(400)  # Set a minimum height
         
-        # Create 3D figure with improved styling
-        self.figure = Figure(figsize=(5, 4), dpi=100)
-        self.figure.patch.set_facecolor('#FAFAFA')
-        self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111, projection='3d')
+
         
-        # Initial plot setup
-        self.setup_3d_plot()
-        
-        viz_layout.addWidget(self.canvas)
-        
-        # Add coordinate display
+        # Add coordinate display with reduced size
         coord_layout = QHBoxLayout()
         coord_layout.addWidget(QLabel("Coordinates:"))
-        self.coord_label = QLabel("Select a shot to see coordinates")
+        
+        # Create a scrollable text area for coordinates
+        from PyQt6.QtWidgets import QTextEdit
+        self.coord_label = QTextEdit()
+        self.coord_label.setReadOnly(True)
         self.coord_label.setStyleSheet("""
             background-color: #E3F2FD;
-            padding: 5px;
+            padding: 3px;
             border-radius: 3px;
             font-family: monospace;
+            font-size: 8px;
+            max-height: 80px;
         """)
+        self.coord_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, 
+            QSizePolicy.Policy.Maximum
+        )
+        self.coord_label.setMaximumHeight(80)  # Set maximum height
         coord_layout.addWidget(self.coord_label)
-        viz_layout.addLayout(coord_layout)
+        viz_layout.addLayout(coord_layout, stretch=1)  # Use smaller stretch factor
         
+        # Complete the layout setup
         viz_widget.setLayout(viz_layout)
+
         main_splitter.addWidget(viz_widget)
         
         # Right side: Options
@@ -190,22 +231,36 @@ class VisualizationWidget(QWidget):
         
         self.setLayout(main_layout)
     
+    def debug_print(self, message):
+        """Print debug messages to console."""
+        print(f"DEBUG [Visualization]: {message}", file=sys.stderr)
+        sys.stderr.flush()
+
     def setup_3d_plot(self):
         """Set up the initial 3D plot with professional styling."""
+        # Resilient check
+        if not hasattr(self, 'ax') or self.ax is None:
+            return
+        
+        if hasattr(self, '_is_closing') and self._is_closing:
+            return
+            
         self.ax.clear()
         
         # Set labels with professional formatting
         self.ax.set_xlabel('X', fontsize=12, fontweight='bold', color='#455A64')
-        self.ax.set_ylabel('Z', fontsize=12, fontweight='bold', color='#455A64')  # In MediaPipe, Z is depth
-        self.ax.set_zlabel('Y', fontsize=12, fontweight='bold', color='#455A64')  # In PyQt, Y is inverted (downward)
+        self.ax.set_ylabel('Y', fontsize=12, fontweight='bold', color='#455A64')
+        self.ax.set_zlabel('Z', fontsize=12, fontweight='bold', color='#455A64')
         
-        # Set initial view
-        self.ax.view_init(elev=20, azim=-60)
+        # Set a more extreme view angle to better show 3D depth
+        # Try different elevation and azimuth for better 3D effect
+        self.ax.view_init(elev=90, azim=90)  # This should give a better view of depth
         
-        # Set axis limits (will be adjusted based on data)
-        self.ax.set_xlim3d([0, 640])
-        self.ax.set_ylim3d([-100, 100])
-        self.ax.set_zlim3d([0, 480])
+        # Set aspect ratio to 'auto' to avoid distortion
+        self.ax.set_box_aspect([1, 1, 1])  # Equal aspect ratio for all axes
+        
+        # DON'T invert axes - this may be causing confusion
+        # Keep the natural orientation for now
         
         # Set title with professional formatting
         self.ax.set_title('3D Joint Visualization', fontsize=14, fontweight='bold', color='#263238')
@@ -214,31 +269,83 @@ class VisualizationWidget(QWidget):
         self.ax.grid(True, linestyle='--', alpha=0.7, color='#CFD8DC')
         
         # Set figure face color for better integration with UI
-        self.figure.patch.set_facecolor('#FAFAFA')
+        if hasattr(self, 'figure') and self.figure:
+            self.figure.patch.set_facecolor('#FAFAFA')
         self.ax.set_facecolor('#F5F5F5')
         
         # Add subtle box for better 3D perception
-        self.ax.xaxis.pane.fill = False
-        self.ax.yaxis.pane.fill = False
-        self.ax.zaxis.pane.fill = False
-        self.ax.xaxis.pane.set_edgecolor('#ECEFF1')
-        self.ax.yaxis.pane.set_edgecolor('#ECEFF1')
-        self.ax.zaxis.pane.set_edgecolor('#ECEFF1')
+        if hasattr(self.ax, 'xaxis') and hasattr(self.ax.xaxis, 'pane'):
+            self.ax.xaxis.pane.fill = False
+            self.ax.yaxis.pane.fill = False
+            self.ax.zaxis.pane.fill = False
+            self.ax.xaxis.pane.set_edgecolor('#ECEFF1')
+            self.ax.yaxis.pane.set_edgecolor('#ECEFF1')
+            self.ax.zaxis.pane.set_edgecolor('#ECEFF1')
         
         # Improve axis tick formatting
         self.ax.tick_params(axis='x', colors='#546E7A', labelsize=10)
         self.ax.tick_params(axis='y', colors='#546E7A', labelsize=10)
         self.ax.tick_params(axis='z', colors='#546E7A', labelsize=10)
         
-        # Draw canvas
-        self.figure.tight_layout()
-        self.canvas.draw()
+        # Draw canvas with safety checks
+        try:
+            if hasattr(self, 'figure') and self.figure and hasattr(self, 'canvas') and self.canvas:
+                self.figure.tight_layout()
+                self.canvas.draw()
+        except Exception as e:
+            print(f"Error drawing canvas: {e}")
+
+    def rotate_skeleton(self, angle_degrees):
+        """
+        Set the skeleton rotation to the specified angle around the Y axis.
+        This rotates the data itself rather than changing the view angle.
+        
+        Args:
+            angle_degrees: Absolute angle to set (0=front, 90=left, 180=back, 270=right)
+        """
+        if not hasattr(self, 'selected_shots') or not self.selected_shots:
+            return
+        
+        # Store the new rotation angle
+        self.skeleton_rotation_angle = angle_degrees
+        
+        # Update the visualization with the new rotation angle
+        self.update_visualization()
+
+    def rotate_point_y(self, x, y, z, angle_degrees):
+        """
+        Rotate a point around the Y axis by the given angle.
+        
+        Args:
+            x, y, z: Coordinates of the point (unscaled)
+            angle_degrees: Angle to rotate by, in degrees
+            
+        Returns:
+            Tuple of new (x, y, z) coordinates after rotation
+        """
+        import math
+        
+        angle_rad = math.radians(angle_degrees)
+        new_x = x * math.cos(angle_rad) + z * math.sin(angle_rad)
+        new_z = -x * math.sin(angle_rad) + z * math.cos(angle_rad)
+        
+        return new_x, y, new_z
     
+
     def reset_3d_view(self):
-        """Reset the 3D view to the default perspective."""
-        self.ax.view_init(elev=20, azim=-60)
-        self.canvas.draw()
-    
+        """Reset both the view angle and the skeleton rotation."""
+        if self._is_closing or not hasattr(self, 'ax') or not self.ax:
+            return
+        
+        # Reset view angle to 90, 90
+        self.ax.view_init(elev=90, azim=90)
+        
+        # Reset skeleton rotation to front view (0 degrees)
+        self.skeleton_rotation_angle = 0
+        
+        # Update the visualization
+        self.update_visualization()
+
     def set_user(self, user_id: int):
         """
         Set the current user and load their sessions.
@@ -321,7 +428,7 @@ class VisualizationWidget(QWidget):
             # Format timestamp
             timestamp = shot['timestamp'].split('T')[1][:8]  # HH:MM:SS
             
-            # Create list item
+            # Create list item with updated score reference
             item_text = f"Shot {i+1} - {timestamp} - Score: {shot['subjective_score']}"
             item = QListWidgetItem(item_text)
             
@@ -352,7 +459,7 @@ class VisualizationWidget(QWidget):
             # Format shot info
             info_text = f"Shot ID: {shot['id']}\n"
             info_text += f"Time: {shot['timestamp']}\n"
-            info_text += f"Subjective Score: {shot['subjective_score']}\n\n"
+            info_text += f"Score: {shot['subjective_score']}\n\n"
             
             # Add metrics
             metrics = shot['metrics']
@@ -389,16 +496,27 @@ class VisualizationWidget(QWidget):
     
     def update_visualization(self):
         """Update the 3D visualization based on selected shots."""
+        if self._is_closing or not hasattr(self, 'ax') or not self.ax:
+            return
+            
         if not self.selected_shots:
             self.setup_3d_plot()  # Reset plot
-            self.coord_label.setText("Select a shot to see coordinates")
+            self.coord_label.setHtml("Select a shot to see coordinates")
             return
         
         # Clear the plot
         self.ax.clear()
         
-        # Always use "Points and Lines" visualization
-        viz_type = "Points and Lines"
+        # Set labels with professional formatting
+        self.ax.set_xlabel('X', fontsize=12, fontweight='bold', color='#455A64')
+        self.ax.set_ylabel('Z', fontsize=12, fontweight='bold', color='#455A64')
+        self.ax.set_zlabel('Y', fontsize=12, fontweight='bold', color='#455A64')
+        
+        # Set a more effective view angle for better 3D depth perception
+        self.ax.view_init(elev=90, azim=90)  # This gives better depth visibility
+        
+        # Maintain proper proportions with equal aspect ratio
+        self.ax.set_box_aspect([1, 1, 1])  # Equal aspect ratio prevents distortion
         
         # Color map for multiple shots
         colors = ['#1976D2', '#D32F2F', '#388E3C', '#7B1FA2', '#FFA000', '#0097A7', '#5D4037']
@@ -419,29 +537,28 @@ class VisualizationWidget(QWidget):
             ('RIGHT_HIP', 'RIGHT_ANKLE')
         ]
         
-        # Collect all coordinate data for display
-        coordinate_text = ""
+        # Initialize HTML formatted coordinate text for better display
+        coordinate_html = "<style>table {width:100%;} td {padding:1px 3px;}</style><table>"
+        coordinate_html += "<tr><th colspan='4'>Coordinates (X, Y, Z)</th></tr>"
         
         # Process each selected shot
         for shot_idx, shot in enumerate(self.selected_shots):
             color = colors[shot_idx % len(colors)]
             
             # Extract joint positions from metrics
-            if 'joint_positions' not in shot['metrics']:
+            joint_positions = {}
+            if 'joint_positions' in shot['metrics'] and shot['metrics']['joint_positions']:
+                joint_positions = shot['metrics']['joint_positions']
+                print(f"Using stored joint positions for shot {shot['id']}")
+            else:
                 # Try to get it from other metrics if available
-                joint_positions = {}
-                
-                # Check if joints info is available in another format
                 if 'sway_velocity' in shot['metrics']:
                     # This is a fallback approach - we don't have real positions but can create placeholders
                     # for visualization purposes - in real app you'd want to store actual joint positions
-                    placeholder_positions = {}
-                    
-                    # Use sway velocities to create a suggestive layout
                     sway_data = shot['metrics']['sway_velocity']
                     
                     # Create a basic layout for common joints
-                    base_positions = {
+                    joint_positions = {
                         'NOSE': {'x': 320, 'y': 100, 'z': 0},
                         'LEFT_SHOULDER': {'x': 280, 'y': 150, 'z': 0},
                         'RIGHT_SHOULDER': {'x': 360, 'y': 150, 'z': 0},
@@ -456,65 +573,114 @@ class VisualizationWidget(QWidget):
                     }
                     
                     # Add variation based on sway data if available
-                    for joint in base_positions:
+                    import random
+                    for joint in joint_positions:
                         if joint in sway_data:
-                            # Small random offsets based on sway
-                            import random
                             sway = sway_data[joint]
-                            random.seed(sway + shot['id'])  # Make it deterministic but different across shots
+                            random.seed(int(sway * 100) + shot['id'])  # Make it deterministic but different across shots
                             
                             offset_factor = min(sway / 10, 1.0)  # Normalize sway to reasonable range
                             
                             # Apply small offsets
-                            base_positions[joint]['x'] += random.uniform(-20, 20) * offset_factor
-                            base_positions[joint]['y'] += random.uniform(-20, 20) * offset_factor
-                            base_positions[joint]['z'] += random.uniform(-10, 10) * offset_factor
+                            joint_positions[joint]['x'] += random.uniform(-20, 20) * offset_factor
+                            joint_positions[joint]['y'] += random.uniform(-20, 20) * offset_factor
+                            joint_positions[joint]['z'] += random.uniform(-10, 10) * offset_factor
                     
-                    joint_positions = base_positions
+                    print(f"Generated positions for shot {shot['id']}")
                 else:
                     # No position data available
+                    print(f"No position data available for shot {shot['id']}")
                     continue
-            else:
-                joint_positions = shot['metrics']['joint_positions']
-            
-            # Plot the skeleton
-            self.plot_skeleton(joint_positions, connections, color, shot_idx)
-            
-            # Collect coordinate data for display
-            if shot_idx == 0:  # Show coordinates for first selected shot
-                coordinate_text = "Coordinates (X, Y, Z):\n"
-                for joint in sorted(joint_positions.keys()):
-                    pos = joint_positions[joint]
+
+            # In the update_visualization function, modify this part:
+            rotated_joint_positions = {}
+            for joint, pos in joint_positions.items():
+                # Handle various data formats
+                if isinstance(pos, list):
+                    if not pos:
+                        continue
+                    pos = pos[0]
+                
+                if not all(key in pos for key in ['x', 'y', 'z']):
+                    continue
                     
-                    # Handle if pos is a list
-                    if isinstance(pos, list):
-                        pos = pos[0]
+                # Get the original unscaled coordinates
+                x, y, z = pos['x'], pos['y'], pos['z']
+                
+                # First rotate the unscaled coordinates
+                new_x, new_y, new_z = self.rotate_point_y(x, y, z, self.skeleton_rotation_angle)
+                
+                # Store the rotated coordinates
+                rotated_joint_positions[joint] = {'x': new_x, 'y': new_y, 'z': new_z}
+            # Plot the skeleton with the rotated positions        
+            # Only plot the skeleton once, with rotated positions
+            try:
+                self.plot_skeleton(rotated_joint_positions, connections, color, shot_idx)
+                
+                # For the first shot, build the coordinates table
+                if shot_idx == 0:
+                    # Filter to just show important joints to save space
+                    important_joints = [
+                        'NOSE', 'LEFT_SHOULDER', 'RIGHT_SHOULDER', 
+                        'LEFT_ELBOW', 'RIGHT_ELBOW', 
+                        'LEFT_WRIST', 'RIGHT_WRIST'
+                    ]
                     
-                    x, y, z = pos['x'], pos['z'], pos['y']  # Note the mapping
-                    coordinate_text += f"{joint}: ({x:.1f}, {y:.1f}, {z:.1f})\n"
+                    # Sort joints in a logical order
+                    sorted_joints = [j for j in important_joints if j in rotated_joint_positions]
+                    
+                    # Add any other joints that might be in the data
+                    for joint in sorted(rotated_joint_positions.keys()):
+                        if joint not in sorted_joints:
+                            sorted_joints.append(joint)
+                    
+                    # Build table rows for each joint
+                    for joint in sorted_joints:
+                        pos = rotated_joint_positions.get(joint)
+                        if not pos:
+                            continue
+                        
+                        # Handle list case
+                        if isinstance(pos, list):
+                            if not pos:
+                                continue
+                            pos = pos[0]
+                        
+                        # Check for required keys
+                        if not all(key in pos for key in ['x', 'y', 'z']):
+                            continue
+                        
+                        x, y, z = pos['x'], pos['y'], pos['z'] * 640
+                        # Format with just one decimal place to save space
+                        coordinate_html += f"<tr><td>{joint}:</td><td>{x:.1f}</td><td>{y:.1f}</td><td>{z:.1f}</td></tr>"
+            except Exception as e:
+                print(f"Error plotting shot {shot['id']}: {e}")
+                import traceback
+                print(traceback.format_exc())
         
-        # Update coordinate display
-        if coordinate_text:
-            self.coord_label.setText(coordinate_text)
-        else:
-            self.coord_label.setText("No coordinate data available")
+        # Close the HTML table
+        coordinate_html += "</table>"
         
-        # Set plot properties
-        self.ax.set_xlabel('X')
-        self.ax.set_ylabel('Z')
-        self.ax.set_zlabel('Y')
+        # Set the HTML content instead of plain text
+        self.coord_label.setHtml(coordinate_html)
         
+        # Set plot title based on selected shots
         if len(self.selected_shots) == 1:
             self.ax.set_title(f'Shot #{self.selected_shots[0]["id"]} - Score: {self.selected_shots[0]["subjective_score"]}')
         else:
             self.ax.set_title(f'Comparing {len(self.selected_shots)} Shots')
         
-        self.ax.grid(True)
+        # Add grid
+        self.ax.grid(True, linestyle='--', alpha=0.7, color='#CFD8DC')
         
-        # Draw the updated plot
+        # Force redraw of the canvas
         self.figure.tight_layout()
         self.canvas.draw()
-    
+        
+        # Force GUI update to ensure coordinates are shown
+        from PyQt6.QtCore import QCoreApplication
+        QCoreApplication.processEvents()
+        
     def _get_joint_group(self, joint_name):
         """
         Map individual joint names to their group categories for visualization filtering.
@@ -538,68 +704,174 @@ class VisualizationWidget(QWidget):
     def plot_skeleton(self, joint_positions, connections, color, shot_idx):
         """
         Plot the skeleton with points and lines with improved visualization.
-
+        
         Args:
             joint_positions: Dictionary of joint positions
             connections: List of joint connections
-            color: Color for this skeleton
+            color: Color for this skeleton (used when comparing multiple shots)
             shot_idx: Index of the shot
         """
+        # Define colors for different body parts
+        body_part_colors = {
+            'SHOULDERS': '#1976D2',  # Blue
+            'LEFT_SHOULDER': '#1976D2',
+            'RIGHT_SHOULDER': '#1976D2',
+            
+            'ELBOWS': '#D32F2F',     # Red
+            'LEFT_ELBOW': '#D32F2F',
+            'RIGHT_ELBOW': '#D32F2F',
+            
+            'WRISTS': '#388E3C',     # Green
+            'LEFT_WRIST': '#388E3C',
+            'RIGHT_WRIST': '#388E3C',
+            
+            'NOSE': '#7B1FA2',       # Purple
+            
+            'HIPS': '#FFA000',       # Orange
+            'LEFT_HIP': '#FFA000',
+            'RIGHT_HIP': '#FFA000',
+            
+            'ANKLES': '#0097A7',     # Cyan
+            'LEFT_ANKLE': '#0097A7',
+            'RIGHT_ANKLE': '#0097A7'
+        }
+        
+        # Determine if we're in comparison mode (multiple shots selected)
+        comparison_mode = len(self.selected_shots) > 1
+        
+        # Mapping from joint names to abbreviations
+        joint_labels = {
+            'NOSE': 'NO',
+            'LEFT_SHOULDER': 'LS',
+            'RIGHT_SHOULDER': 'RS',
+            'LEFT_ELBOW': 'LE',
+            'RIGHT_ELBOW': 'RE',
+            'LEFT_WRIST': 'LW',
+            'RIGHT_WRIST': 'RW',
+            'LEFT_HIP': 'LH',
+            'RIGHT_HIP': 'RH',
+            'LEFT_ANKLE': 'LA',
+            'RIGHT_ANKLE': 'RA'
+        }
+        
+        # Track min/max coordinates for proper scaling
         x_vals, y_vals, z_vals = [], [], []
-
-        for joint_name in joint_positions:
+        
+        # Plot joints as points
+        for joint_name, pos in joint_positions.items():
+            # Skip if joint data is invalid
+            if pos is None:
+                continue
+                
             joint_group = self._get_joint_group(joint_name)
             if joint_group not in self.joint_visibility or not self.joint_visibility[joint_group]:
                 continue
-
-            pos = joint_positions[joint_name]
+            
+            # In case we have multiple samples for the joint
+            # In the plot_skeleton function, when you're getting the coordinates:
             if isinstance(pos, list):
+                if not pos:  # Check if list is empty
+                    continue
                 pos = pos[0]
 
-            x, y, z = pos['x'], pos['z'], pos['y']  # Note the coordinate mapping
+            if not all(key in pos for key in ['x', 'y', 'z']):
+                print(f"Missing coordinate data for joint {joint_name}: {pos}")
+                continue
 
+            # Apply scaling to Z after rotation
+            x, y, z = pos['x'], pos['y'], pos['z'] * 640
+
+            # Add to coordinate lists for scaling
             x_vals.append(x)
-            y_vals.append(z)
-            z_vals.append(y)
-
-            self.ax.scatter([x], [y], [z], color=color, s=70,
+            y_vals.append(y)
+            z_vals.append(z)
+            
+            # Choose color based on mode:
+            # In comparison mode - use the shot color to distinguish between skeletons
+            # In single shot mode - use the body part colors for better visualization
+            if comparison_mode:
+                joint_color = color  # Use shot color in comparison mode
+            else:
+                joint_color = body_part_colors.get(joint_name, color)  # Use body part color in single shot mode
+            
+            # Plot the joint
+            self.ax.scatter([x], [y], [z], color=joint_color, s=30, 
                             alpha=0.8, edgecolors='white', linewidths=1,
-                            label=f"{joint_name} (Shot {shot_idx+1})" if shot_idx == 0 else "")
-
+                            label=f"{joint_name}" if shot_idx == 0 else "")
+            
+            # Add text label for the joint
+            label = joint_labels.get(joint_name, joint_name)
+            self.ax.text(x, y, z, label, fontsize=8,
+                        ha='center', va='center', color='black')
+            
+        # Plot connections as lines with matching colors
         for joint1, joint2 in connections:
             joint1_group = self._get_joint_group(joint1)
             joint2_group = self._get_joint_group(joint2)
-
-            if ((joint1_group not in self.joint_visibility or
-                 joint2_group not in self.joint_visibility or
-                 not self.joint_visibility[joint1_group] or
-                 not self.joint_visibility[joint2_group] or
-                 joint1 not in joint_positions or
-                 joint2 not in joint_positions)):
+            
+            if (joint1_group not in self.joint_visibility or 
+                joint2_group not in self.joint_visibility or
+                not self.joint_visibility[joint1_group] or 
+                not self.joint_visibility[joint2_group] or
+                joint1 not in joint_positions or 
+                joint2 not in joint_positions):
                 continue
-
+            
             pos1 = joint_positions[joint1]
             pos2 = joint_positions[joint2]
-
+            
+            # Handle multiple samples
             if isinstance(pos1, list):
+                if not pos1:
+                    continue
                 pos1 = pos1[0]
             if isinstance(pos2, list):
+                if not pos2:
+                    continue
                 pos2 = pos2[0]
-
-            x1, y1, z1 = pos1['x'], pos1['z'], pos1['y']
-            x2, y2, z2 = pos2['x'], pos2['z'], pos2['y']
-
-            self.ax.plot([x1, x2], [y1, y2], [z1, z2], color=color, linewidth=2, alpha=0.7)
-
+            
+            if not all(key in pos1 for key in ['x', 'y', 'z']) or not all(key in pos2 for key in ['x', 'y', 'z']):
+                continue
+            
+            # Remap coordinates consistently
+            x1, y1, z1 = pos1['x'], pos1['y'], pos1['z'] * 640
+            x2, y2, z2 = pos2['x'], pos2['y'], pos2['z'] * 640
+            
+            # Choose color based on mode (same logic as for joints)
+            if comparison_mode:
+                connection_color = color  # Use shot color in comparison mode
+            else:
+                # In single shot mode, use body part colors
+                # We could use either joint's color - here we're using joint1's
+                connection_color = body_part_colors.get(joint1, color)
+            
+            self.ax.plot([x1, x2], [y1, y2], [z1, z2], color=connection_color, linewidth=1.5, alpha=0.7)
+        
+        # Axis limit adjustments...
         if x_vals and y_vals and z_vals:
-            x_range = max(x_vals) - min(x_vals)
-            y_range = max(y_vals) - min(y_vals)
-            z_range = max(z_vals) - min(z_vals)
-            padding = max(x_range, y_range, z_range) * 0.2
-
-            self.ax.set_xlim3d([min(x_vals) - padding, max(x_vals) + padding])
-            self.ax.set_ylim3d([min(y_vals) - padding, max(y_vals) + padding])
-            self.ax.set_zlim3d([min(z_vals) - padding, max(z_vals) + padding])
+            try:
+                x_min, x_max = min(x_vals), max(x_vals)
+                y_min, y_max = min(y_vals), max(y_vals) 
+                z_min, z_max = min(z_vals), max(z_vals)
+                
+                x_range = max(x_max - x_min, 1)
+                y_range = max(y_max - y_min, 1)
+                z_range = max(z_max - z_min, 1)
+                
+                x_center = (x_min + x_max) / 2
+                y_center = (y_min + y_max) / 2
+                z_center = (z_min + z_max) / 2
+                
+                max_range = max(x_range, y_range, z_range)
+                padding = max_range * 0.6
+                
+                self.ax.set_xlim3d([x_center - padding, x_center + padding])
+                self.ax.set_ylim3d([y_center - padding, y_center + padding])
+                self.ax.set_zlim3d([z_center - padding, z_center + padding])
+                
+                self.ax.set_box_aspect([1.0, 1.0, 1.0])
+            except Exception as e:
+                print(f"Error setting axis limits: {e}")
 
     def compare_shots(self):
         """Compare multiple selected shots in the 3D visualization."""
@@ -645,3 +917,75 @@ class VisualizationWidget(QWidget):
                 # If session not found, just set ID and load shots
                 self.session_id = session_id
                 self.load_session_shots()
+
+    def _create_matplotlib_figure(self):
+        """Create the matplotlib figure and canvas - separated for better control"""
+        # Create 3D figure with improved styling and larger size
+        self.figure = Figure(figsize=(10, 8), dpi=100)
+        self.figure.patch.set_facecolor('#FAFAFA')
+        
+        # Create canvas
+        self.canvas = FigureCanvas(self.figure)
+        
+        # Create 3D axes
+        self.ax = self.figure.add_subplot(111, projection='3d')
+        
+        # Initial plot setup
+        self.setup_3d_plot()
+
+    def safe_draw(self):
+        """Safely draw the canvas with error handling and recreation if needed."""
+        if hasattr(self, '_is_closing') and self._is_closing:
+            return
+            
+        try:
+            # Check and recreate canvas if needed
+            recreated = self._ensure_canvas_valid()
+            
+            # Only proceed if canvas is now valid
+            if hasattr(self, 'canvas') and self.canvas:
+                if hasattr(self, 'figure') and self.figure:
+                    self.figure.tight_layout()
+                self.canvas.draw_idle()  # Using draw_idle() is safer than draw()
+        except Exception as e:
+            print(f"Error in safe_draw: {e}")
+            traceback.print_exc()
+
+    def closeEvent(self, event):
+        """Handle the widget close event by cleaning up matplotlib resources."""
+        self._is_closing = True
+        # Explicitly clean up matplotlib resources
+        if hasattr(self, 'figure') and self.figure:
+            import matplotlib.pyplot as plt
+            plt.close(self.figure)
+        super().closeEvent(event)
+    
+    def _ensure_canvas_valid(self):
+        """Check if canvas is valid, recreate if needed."""
+        if not hasattr(self, 'canvas') or self.canvas is None or not hasattr(self, 'figure') or self.figure is None:
+            print("Canvas or figure not found, recreating")
+            
+            # Recreate figure and canvas
+            self.figure = Figure(figsize=(10, 8), dpi=100)
+            self.figure.patch.set_facecolor('#FAFAFA')
+            self.canvas = FigureCanvas(self.figure)
+            self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            self.canvas.setMinimumHeight(400)
+            
+            # Recreate axes
+            self.ax = self.figure.add_subplot(111, projection='3d')
+            
+            # Find and replace canvas in the layout
+            if hasattr(self, 'canvas_parent_layout'):
+                old_index = self.canvas_parent_layout.indexOf(self.old_canvas)
+                if old_index >= 0:
+                    self.canvas_parent_layout.removeWidget(self.old_canvas)
+                    self.canvas_parent_layout.insertWidget(old_index, self.canvas, stretch=3)
+                    self.old_canvas.deleteLater()
+                    self.old_canvas = self.canvas
+            
+            # Setup the plot again
+            self.setup_3d_plot()
+            return True
+        
+        return False

@@ -71,7 +71,7 @@ class MainWindow(QMainWindow):
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo_label.setStyleSheet("margin: 20px;")
         # In a real app, you would use: logo_label.setPixmap(QPixmap("path/to/logo.png"))
-        logo_label.setText("RIFLE SHOT ANALYSIS")
+        logo_label.setText("RIFLE SHOOTING ANALYTICS")
         logo_label.setStyleSheet("font-size: 28px; font-weight: bold; color: #1976D2; margin: 30px; letter-spacing: 2px;")
         layout.addWidget(logo_label)
         
@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(auth_container)
         
         # Add some professional info text
-        info_label = QLabel("Advanced analytics for precision shooting professionals")
+        info_label = QLabel("Advanced analytics for Air rifle shooting professionals")
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         info_label.setStyleSheet("color: #757575; margin-top: 30px;")
         layout.addWidget(info_label)
@@ -427,12 +427,17 @@ class MainWindow(QMainWindow):
             color: #1976D2;
         }
         
-        QComboBox {
+         QComboBox {
             border: 1px solid #CFD8DC;
             border-radius: 4px;
             padding: 6px 8px;
             min-width: 6em;
             background-color: white;
+            color: #2c3e50;
+        }
+        
+        QComboBox:hover {
+            border-color: #2196F3;
         }
         
         QComboBox::drop-down {
@@ -444,6 +449,32 @@ class MainWindow(QMainWindow):
             border-left-style: solid;
         }
         
+        /* Critical fix for dropdown items */
+        QComboBox QAbstractItemView {
+            color: #2c3e50 !important;
+            background-color: white !important;
+            selection-background-color: #E3F2FD !important;
+            selection-color: #2c3e50 !important;
+            border: 1px solid #CFD8DC;
+            border-radius: 4px;
+        }
+        
+        QComboBox QAbstractItemView::item {
+            color: #2c3e50;
+            padding: 5px;
+            min-height: 25px;
+        }
+        
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #E3F2FD;
+            color: #2c3e50;
+        }
+        
+        QComboBox QAbstractItemView::item:selected {
+            background-color: #BBDEFB;
+            color: #2c3e50;
+        }
+            
         QSpinBox, QDoubleSpinBox {
             border: 1px solid #CFD8DC;
             border-radius: 4px;
