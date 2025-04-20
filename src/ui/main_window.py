@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.visualization_widget, self.style().standardIcon(self.style().StandardPixmap.SP_ToolBarHorizontalExtensionButton), "3D Visualization")
         
         self.replay_widget = ReplayWidget(self.data_storage)
-        self.tab_widget.addTab(self.replay_widget, self.style().standardIcon(self.style().StandardPixmap.SP_MediaSeekForward), "Session Replay")
+        self.tab_widget.addTab(self.replay_widget, self.style().standardIcon(self.style().StandardPixmap.SP_MediaSeekForward), "Session Playback")
         
         self.settings_widget = SettingsWidget(self.data_storage)
         self.tab_widget.addTab(self.settings_widget, self.style().standardIcon(self.style().StandardPixmap.SP_FileDialogDetailedView), "Settings")

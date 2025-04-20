@@ -515,201 +515,92 @@ class VisualizationWidget(QWidget):
         self.figure.tight_layout()
         self.canvas.draw()
     
+    def _get_joint_group(self, joint_name):
+        """
+        Map individual joint names to their group categories for visualization filtering.
+
+        Args:
+            joint_name: Name of the joint from the tracking data
+
+        Returns:
+            Group name that corresponds to the visibility checkboxes
+        """
+        mapping = {
+            'LEFT_ANKLE': 'ANKLES', 'RIGHT_ANKLE': 'ANKLES',
+            'LEFT_HIP': 'HIPS', 'RIGHT_HIP': 'HIPS',
+            'LEFT_SHOULDER': 'SHOULDERS', 'RIGHT_SHOULDER': 'SHOULDERS',
+            'LEFT_ELBOW': 'ELBOWS', 'RIGHT_ELBOW': 'ELBOWS',
+            'LEFT_WRIST': 'WRISTS', 'RIGHT_WRIST': 'WRISTS',
+            'NOSE': 'NOSE'
+        }
+        return mapping.get(joint_name, joint_name)
+
     def plot_skeleton(self, joint_positions, connections, color, shot_idx):
         """
         Plot the skeleton with points and lines with improved visualization.
-        
+
         Args:
             joint_positions: Dictionary of joint positions
             connections: List of joint connections
             color: Color for this skeleton
             shot_idx: Index of the shot
         """
-        # Track min/max coordinates for proper scaling
         x_vals, y_vals, z_vals = [], [], []
-        
-        # Plot joints as points with better styling
-        for joint, visible in self.joint_visibility.items():
-            if not visible or joint not in joint_positions:
+
+        for joint_name in joint_positions:
+            joint_group = self._get_joint_group(joint_name)
+            if joint_group not in self.joint_visibility or not self.joint_visibility[joint_group]:
                 continue
-            
-            pos = joint_positions[joint]
-            
-            # In case we have multiple samples for the joint
+
+            pos = joint_positions[joint_name]
             if isinstance(pos, list):
-                # Just use the first position for skeleton
                 pos = pos[0]
-            
+
             x, y, z = pos['x'], pos['z'], pos['y']  # Note the coordinate mapping
-            
-            # Add to coordinate lists for scaling
+
             x_vals.append(x)
-            y_vals.append(y)
-            z_vals.append(z)
-            
-            # Plot the joint with improved styling
-            self.ax.scatter([x], [y], [z], color=color, s=70, 
+            y_vals.append(z)
+            z_vals.append(y)
+
+            self.ax.scatter([x], [y], [z], color=color, s=70,
                             alpha=0.8, edgecolors='white', linewidths=1,
-                            label=f"{joint} (Shot {shot_idx+1})" if shot_idx == 0 else "")
-        
-        # Plot connections as lines with improved styling
+                            label=f"{joint_name} (Shot {shot_idx+1})" if shot_idx == 0 else "")
+
         for joint1, joint2 in connections:
-            if (joint1 not in self.joint_visibility or joint2 not in self.joint_visibility or
-                not self.joint_visibility[joint1] or not self.joint_visibility[joint2] or
-                joint1 not in joint_positions or joint2 not in joint_positions):
+            joint1_group = self._get_joint_group(joint1)
+            joint2_group = self._get_joint_group(joint2)
+
+            if ((joint1_group not in self.joint_visibility or
+                 joint2_group not in self.joint_visibility or
+                 not self.joint_visibility[joint1_group] or
+                 not self.joint_visibility[joint2_group] or
+                 joint1 not in joint_positions or
+                 joint2 not in joint_positions)):
                 continue
-            
+
             pos1 = joint_positions[joint1]
             pos2 = joint_positions[joint2]
-            
-            # In case we have multiple samples
+
             if isinstance(pos1, list):
                 pos1 = pos1[0]
             if isinstance(pos2, list):
                 pos2 = pos2[0]
-            
+
             x1, y1, z1 = pos1['x'], pos1['z'], pos1['y']
             x2, y2, z2 = pos2['x'], pos2['z'], pos2['y']
-            
-            # Draw line with improved styling
+
             self.ax.plot([x1, x2], [y1, y2], [z1, z2], color=color, linewidth=2, alpha=0.7)
-        
-        # Adjust axis limits if we have data
+
         if x_vals and y_vals and z_vals:
             x_range = max(x_vals) - min(x_vals)
             y_range = max(y_vals) - min(y_vals)
             z_range = max(z_vals) - min(z_vals)
-            
-            # Add padding
             padding = max(x_range, y_range, z_range) * 0.2
-            
+
             self.ax.set_xlim3d([min(x_vals) - padding, max(x_vals) + padding])
             self.ax.set_ylim3d([min(y_vals) - padding, max(y_vals) + padding])
             self.ax.set_zlim3d([min(z_vals) - padding, max(z_vals) + padding])
-        
-        # Add a legend if this is the first shot
-        if shot_idx == 0:
-            handles, labels = self.ax.get_legend_handles_labels()
-            if handles:
-                by_label = dict(zip(labels, handles))
-                self.ax.legend(by_label.values(), by_label.keys(), 
-                            loc='upper right', fontsize=8)
-    
-    def plot_motion_trails(self, joint_positions, color, shot_idx):
-        """
-        Plot motion trails for joints.
-        
-        Args:
-            joint_positions: Dictionary of joint positions
-            color: Color for this shot
-            shot_idx: Index of the shot
-        """
-        # This is a placeholder implementation, as the actual joint position history
-        # would need to be stored in the shot data for this to work properly
-        
-        # For demonstration, we'll just plot the skeleton
-        self.plot_skeleton(joint_positions, [], color, shot_idx)
-        
-        # If we had actual motion data, we would plot trails like this:
-        """
-        for joint, visible in self.joint_visibility.items():
-            if not visible or joint not in joint_positions:
-                continue
-            
-            positions = joint_positions[joint]
-            
-            # If we have a history of positions
-            if isinstance(positions, list) and len(positions) > 1:
-                x = [pos['x'] for pos in positions]
-                y = [pos['z'] for pos in positions]  # Z in MediaPipe is depth
-                z = [pos['y'] for pos in positions]  # Y in PyQt is inverted
-                
-                # Plot the trail with decreasing alpha
-                for i in range(1, len(x)):
-                    alpha = 0.3 + 0.7 * (i / len(x))  # Fade from 0.3 to 1.0
-                    self.ax.plot(x[i-1:i+1], y[i-1:i+1], z[i-1:i+1], color=color, alpha=alpha)
-                
-                # Plot the final position
-                self.ax.scatter([x[-1]], [y[-1]], [z[-1]], color=color, s=50,
-                                label=f"{joint} (Shot {shot_idx+1})" if shot_idx == 0 else "")
-        """
-    
-    def plot_heatmap(self, joint_positions, shot_idx):
-        """
-        Plot heatmap visualization of joint stability with professional styling.
-        
-        Args:
-            joint_positions: Dictionary of joint positions
-            shot_idx: Index of the shot
-        """
-        # Get sway velocities if available
-        sway_velocities = self.selected_shots[shot_idx]['metrics'].get('sway_velocity', {})
-        
-        # Plot joints as points with color based on sway and improved styling
-        for joint, visible in self.joint_visibility.items():
-            if not visible or joint not in joint_positions:
-                continue
-            
-            pos = joint_positions[joint]
-            
-            # In case we have multiple samples
-            if isinstance(pos, list):
-                pos = pos[0]
-            
-            x, y, z = pos['x'], pos['z'], pos['y']
-            
-            # Get sway velocity for this joint
-            sway = sway_velocities.get(joint, 0)
-            
-            # Professional color mapping using a proper color scale: green (stable) to red (unstable)
-            normalized_sway = min(1.0, sway / 20.0)  # Cap at 20 mm/s
-            
-            # Better color interpolation
-            if normalized_sway < 0.5:
-                # Green to yellow
-                r = 2 * normalized_sway
-                g = 1.0
-                b = 0.0
-            else:
-                # Yellow to red
-                r = 1.0
-                g = 2 * (1 - normalized_sway)
-                b = 0.0
-            
-            color = [r, g, b]
-            
-            # Plot the joint with improved styling
-            scatter = self.ax.scatter([x], [y], [z], color=color, s=120, alpha=0.8,
-                                    edgecolors='white', linewidths=1,
-                                    label=f"{joint} (Shot {shot_idx+1})" if shot_idx == 0 else "")
-            
-            # Add text label with sway value for better understanding
-            self.ax.text(x, y, z, f"{sway:.1f}", color='white', fontsize=8, 
-                        horizontalalignment='center', verticalalignment='center',
-                        bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
-        
-        # Add a colorbar to explain the heatmap
-        if shot_idx == 0:
-            import matplotlib.pyplot as plt
-            import matplotlib.colors as mcolors
-            from mpl_toolkits.axes_grid1 import make_axes_locatable
-            
-            # Create a custom colormap
-            cmap = mcolors.LinearSegmentedColormap.from_list(
-                'StabilityMap', [(0, (0, 1, 0)), (0.5, (1, 1, 0)), (1, (1, 0, 0))]
-            )
-            
-            # Add a colorbar
-            divider = make_axes_locatable(self.ax)
-            cax = divider.append_axes('right', size='5%', pad=0.1)
-            cbar = plt.colorbar(plt.cm.ScalarMappable(cmap=cmap), cax=cax)
-            cbar.set_label('Sway Velocity (mm/s)', fontsize=10, fontweight='bold')
-            cbar.set_ticks([0, 0.5, 1])
-            cbar.set_ticklabels(['0 (Stable)', '10', '20+ (Unstable)'])
-            
-            # Update layout to accommodate colorbar
-            self.figure.tight_layout()
-    
+
     def compare_shots(self):
         """Compare multiple selected shots in the 3D visualization."""
         if len(self.selected_shots) < 2:

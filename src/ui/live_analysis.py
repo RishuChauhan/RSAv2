@@ -12,6 +12,7 @@ import pyaudio
 import struct
 import time
 import math
+import os
 
 from typing import Dict, List, Optional, Tuple
 
@@ -229,6 +230,25 @@ class LiveAnalysisWidget(QWidget):
         self.manual_shot_button.clicked.connect(self.manual_shot_detection)
         self.manual_shot_button.setEnabled(False)
         controls_layout.addWidget(self.manual_shot_button)
+
+        # Add a recording toggle button (checkbox style)
+        self.record_enabled = QPushButton("Record")
+        self.record_enabled.setCheckable(True)  # Make it a toggle button
+        self.record_enabled.setToolTip("Toggle recording - will record when analysis is running")
+        self.record_enabled.setStyleSheet("""
+            QPushButton {
+                padding: 5px 15px;
+                border: 1px solid #CFD8DC;
+                border-radius: 4px;
+            }
+            QPushButton:checked {
+                background-color: #E53935;
+                color: white;
+                font-weight: bold;
+            }
+        """)
+        self.record_enabled.clicked.connect(self.toggle_recording_state)
+        controls_layout.addWidget(self.record_enabled)
         
         # Session indicator
         self.session_label = QLabel("No active session")
@@ -247,65 +267,59 @@ class LiveAnalysisWidget(QWidget):
         legend_layout = QHBoxLayout()
         
         # High stability indicator
-        high_stability = QLabel("Stable")
-        high_stability.setStyleSheet("""
-            color: #388E3C;
-            font-weight: bold;
-            padding-left: 20px;
-            background-image: url('');
-            background-position: left center;
-            background-repeat: no-repeat;
-            background-color: transparent;
-        """)
-        legend_layout.addWidget(high_stability)
-        
-        # Draw a green circle for high stability indicator
         high_stability_circle = QLabel()
         high_stability_circle.setFixedSize(12, 12)
         high_stability_circle.setStyleSheet("""
             background-color: #4CAF50;
             border-radius: 6px;
         """)
-        legend_layout.insertWidget(0, high_stability_circle)
+        legend_layout.addWidget(high_stability_circle)
+        
+        high_stability = QLabel("Stable")
+        high_stability.setStyleSheet("""
+            color: #388E3C;
+            font-weight: bold;
+            padding-left: 5px;
+        """)
+        legend_layout.addWidget(high_stability)
         
         # Medium stability indicator
-        medium_stability = QLabel("Medium")
-        medium_stability.setStyleSheet("""
-            color: #F57C00;
-            font-weight: bold;
-            padding-left: 20px;
-        """)
-        legend_layout.addWidget(medium_stability)
-        
-        # Draw an orange circle for medium stability indicator
         medium_stability_circle = QLabel()
         medium_stability_circle.setFixedSize(12, 12)
         medium_stability_circle.setStyleSheet("""
             background-color: #FFA000;
             border-radius: 6px;
         """)
-        legend_layout.insertWidget(2, medium_stability_circle)
+        legend_layout.addWidget(medium_stability_circle)
+        
+        medium_stability = QLabel("Medium")
+        medium_stability.setStyleSheet("""
+            color: #F57C00;
+            font-weight: bold;
+            padding-left: 5px;
+        """)
+        legend_layout.addWidget(medium_stability)
         
         # Low stability indicator
-        low_stability = QLabel("Unstable")
-        low_stability.setStyleSheet("""
-            color: #D32F2F;
-            font-weight: bold;
-            padding-left: 20px;
-        """)
-        legend_layout.addWidget(low_stability)
-        
-        # Draw a red circle for low stability indicator
         low_stability_circle = QLabel()
         low_stability_circle.setFixedSize(12, 12)
         low_stability_circle.setStyleSheet("""
             background-color: #F44336;
             border-radius: 6px;
         """)
-        legend_layout.insertWidget(4, low_stability_circle)
+        legend_layout.addWidget(low_stability_circle)
+        
+        low_stability = QLabel("Unstable")
+        low_stability.setStyleSheet("""
+            color: #D32F2F;
+            font-weight: bold;
+            padding-left: 5px;
+        """)
+        legend_layout.addWidget(low_stability)
         
         controls_layout.addLayout(legend_layout)
         
+        # Add controls to main layout
         main_layout.addLayout(controls_layout)
         
         # Main content splitter (camera feed and metrics)
@@ -314,6 +328,17 @@ class LiveAnalysisWidget(QWidget):
         # Left side: Camera feed
         camera_widget = QWidget()
         camera_layout = QVBoxLayout()
+        
+        # Create recording indicator
+        self.recording_indicator = QLabel("● REC")
+        self.recording_indicator.setStyleSheet("""
+            color: #E53935;
+            font-weight: bold;
+            padding: 5px;
+            border-radius: 3px;
+            background-color: rgba(255, 255, 255, 0.7);
+        """)
+        self.recording_indicator.setVisible(False)
         
         # Add a professional-looking frame around the camera view
         camera_frame = QFrame()
@@ -325,13 +350,29 @@ class LiveAnalysisWidget(QWidget):
                 background-color: #263238;
             }
         """)
-        camera_frame_layout = QVBoxLayout()
         
+        # Use QHBoxLayout instead of QVBoxLayout for better positioning of the recording indicator
+        camera_frame_layout = QHBoxLayout()
+        
+        # Create a wrapper widget for the camera and recording indicator
+        camera_wrapper = QWidget()
+        camera_wrapper_layout = QVBoxLayout()
+        camera_wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Add camera view to the wrapper
         self.camera_view = CameraWidget()
         self.camera_view.setStyleSheet("border: none;")
-        camera_frame_layout.addWidget(self.camera_view)
+        camera_wrapper_layout.addWidget(self.camera_view)
+        
+        # Add recording indicator to the wrapper layout
+        camera_wrapper_layout.addWidget(self.recording_indicator, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        camera_wrapper.setLayout(camera_wrapper_layout)
+        
+        # Add wrapper to the frame layout
+        camera_frame_layout.addWidget(camera_wrapper)
         camera_frame.setLayout(camera_frame_layout)
         
+        # Add frame to camera layout
         camera_layout.addWidget(camera_frame)
         
         # Add stability gauge under camera
@@ -637,6 +678,9 @@ class LiveAnalysisWidget(QWidget):
             
             # Check if above threshold
             if normalized_rms > self.audio_threshold:
+                # Record the shot time
+                self.last_shot_time = time.time()
+                
                 # Emit signal for shot detection
                 self.shot_detected_signal.emit()
                 
@@ -669,63 +713,34 @@ class LiveAnalysisWidget(QWidget):
         else:
             self.stop_analysis()
     
-    def start_analysis(self):
-        """Start real-time analysis with automatic recording."""
-        # Start joint tracker
-        self.joint_tracker.start()
-        
-        # Start audio detection
-        self.start_audio_detection()
-        
-        # Start update timer
-        self.update_timer.start(33)  # ~30 FPS
-        
-        # Update UI
-        self.start_stop_button.setText("Stop Analysis")
-        self.camera_running = True
-        self.session_active = True
-        
-        if self.session_id:
-            self.manual_shot_button.setEnabled(True)
-        
-        # Update main window button if accessible
-        main_window = self.window()
-        if hasattr(main_window, 'session_button'):
-            main_window.session_button.setText("End Session")
-    
-    def stop_analysis(self):
-        """Stop real-time analysis."""
-        # Stop update timer
-        self.update_timer.stop()
-        
-        # Stop joint tracker
-        self.joint_tracker.stop()
-        
-        # Stop audio detection
-        self.stop_audio_detection()
-        
-        # Update UI
-        self.start_stop_button.setText("Start Analysis")
-        self.camera_running = False
-        self.manual_shot_button.setEnabled(False)
     
     def end_session(self):
-        """End the current session and show summary."""
+        """End the current session, stop recording, and show summary."""
         if not self.session_active:
             return
-            
+        
+        # Set flag to prevent duplicate messages
+        self.ending_session = True
+        
         # Stop analysis if running
         if self.camera_running:
             self.stop_analysis()
         
-        self.session_active = False
+        # Stop and save recording if it was active
+        if self.record_enabled.isChecked() and hasattr(self, 'recording_metadata'):
+            self.stop_recording()
+        
+        # Reset recording toggle
+        self.record_enabled.setChecked(False)
         
         # Show session summary
         self.show_session_summary()
         
         # Reset session data
+        self.session_active = False
         self.session_shots = 0
         self.session_scores = []
+        self.ending_session = False
         
         # Reset session in main window
         main_window = self.window()
@@ -862,7 +877,8 @@ class LiveAnalysisWidget(QWidget):
         
         # Get joint history for the shot
         joint_history = self.joint_tracker.get_joint_history()
-        
+        shot_time = getattr(self, 'last_shot_time', time.time())
+
         if not joint_history:
             QMessageBox.warning(self, "No Data", "No joint tracking data available.")
             return
@@ -870,7 +886,7 @@ class LiveAnalysisWidget(QWidget):
         # Calculate metrics for the shot
         sway_velocities = self.stability_metrics.calculate_sway_velocity(joint_history)
         dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
-        follow_through = self.stability_metrics.calculate_follow_through_score(joint_history)
+        follow_through = self.stability_metrics.calculate_follow_through_score(joint_history, shot_time)
         
         # Combine metrics
         metrics = {
@@ -919,10 +935,12 @@ class LiveAnalysisWidget(QWidget):
     def manual_shot_detection(self):
         """Manually trigger shot detection."""
         if self.camera_running:
+            # Record the current time as the shot time
+            self.last_shot_time = time.time()
             self.shot_detected_signal.emit()
         else:
             QMessageBox.warning(self, "Analysis Not Running", 
-                               "Please start the analysis first.")
+                            "Please start the analysis first.")
     
     def closeEvent(self, event):
         """Handle widget close event."""
@@ -951,7 +969,9 @@ class LiveAnalysisWidget(QWidget):
                     # Calculate stability metrics with error handling
                     sway_velocities = self.stability_metrics.calculate_sway_velocity(joint_history)
                     dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
-                    follow_through = self.stability_metrics.calculate_follow_through_score(joint_history)
+
+                    current_time = time.time()
+                    follow_through = self.stability_metrics.calculate_follow_through_score(joint_history, current_time)
                     
                     # Combine metrics for feedback with validation
                     metrics = {
@@ -1111,3 +1131,361 @@ class LiveAnalysisWidget(QWidget):
             color: #0D47A1;
         """)
         self.feedback_label.setText(feedback_text)
+
+    def toggle_recording(self):
+        """Toggle recording state."""
+        if not hasattr(self, 'is_recording') or not self.is_recording:
+            self.start_recording()
+        else:
+            self.stop_recording()
+
+    def start_recording(self):
+        """Start recording the current session."""
+        if not self.session_id:
+            return
+        
+        # Get session details
+        self.cursor = self.data_storage.conn.cursor()
+        self.cursor.execute("SELECT name FROM sessions WHERE id = ?", (self.session_id,))
+        session = self.cursor.fetchone()
+        
+        if not session:
+            return
+        
+        # Ensure recordings directory exists
+        self.recordings_dir = "data/recordings"
+        os.makedirs(self.recordings_dir, exist_ok=True)
+        
+        # Create user-specific recordings directory
+        self.user_recordings_dir = os.path.join(self.recordings_dir, f"user_{self.user_id}")
+        os.makedirs(self.user_recordings_dir, exist_ok=True)
+        
+        # Create filename with timestamp if not already recording
+        if not hasattr(self, 'recording_metadata'):
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            self.video_filename = f"session_{self.session_id}_{timestamp}.mp4"
+            self.video_path = os.path.join(self.user_recordings_dir, self.video_filename)
+            
+            # Get video properties
+            width = int(self.joint_tracker.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.joint_tracker.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = int(self.joint_tracker.cap.get(cv2.CAP_PROP_FPS))
+            
+            # Initialize video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.video_writer = cv2.VideoWriter(self.video_path, fourcc, fps, (width, height))
+            
+            # Create metadata
+            self.recording_metadata = {
+                'user_id': self.user_id,
+                'session_id': self.session_id,
+                'session_name': session['name'],
+                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+                'video_file': self.video_filename,
+                'width': width,
+                'height': height,
+                'fps': fps,
+                'metrics': [],
+                'duration': 0,
+                'paused_time': 0  # Track cumulative paused time
+            }
+            
+            # Initialize recording start time
+            self.recording_start_time = time.time()
+            self.recording_paused_time = 0  # For pause/resume tracking
+        else:
+            # Resuming after pause
+            self.recording_paused_time += (time.time() - self.recording_pause_start)
+        
+        # Update UI to show recording is active
+        self.recording_indicator.setVisible(True)
+        
+        # Start recording timer
+        self.recording_timer = QTimer()
+        self.recording_timer.timeout.connect(self.update_recording)
+        self.recording_timer.start(33)  # ~30 FPS
+        
+        # Set recording state
+        self.is_recording = True
+
+    def pause_recording(self):
+        """Pause recording without finalizing."""
+        if not hasattr(self, 'is_recording') or not self.is_recording:
+            return
+        
+        # Stop timer
+        if hasattr(self, 'recording_timer'):
+            self.recording_timer.stop()
+        
+        # Mark pause time for later resuming
+        self.recording_pause_start = time.time()
+        
+        # Hide the recording indicator while paused
+        self.recording_indicator.setVisible(False)
+        
+        # Update state
+        self.is_recording = False
+
+    def update_recording(self):
+        """Update recording with new frame."""
+        if not hasattr(self, 'is_recording') or not self.is_recording or not hasattr(self, 'video_writer'):
+            return
+        
+        # Get the current frame with overlays
+        frame = self.get_current_frame_with_overlays()
+        
+        if frame is not None:
+            # Write frame
+            self.video_writer.write(frame)
+            
+            # Update duration
+            elapsed = time.time() - self.recording_start_time - self.recording_paused_time
+            self.recording_metadata['duration'] = elapsed
+            
+            # Update recording indicator
+            minutes = int(elapsed // 60)
+            seconds = int(elapsed % 60)
+            self.recording_indicator.setText(f"● REC {minutes:02d}:{seconds:02d}")
+
+    def get_current_frame_with_overlays(self):
+        """Get the current camera frame with all visualization overlays."""
+        # This is a simplified version - you'd need to adjust based on your actual UI layout
+        if not hasattr(self.joint_tracker, 'cap') or not self.joint_tracker.cap.isOpened():
+            return None
+        
+        # Get frame with joint tracking
+        frame, joint_data, timestamp = self.joint_tracker.get_frame()
+        
+        if frame is None:
+            return None
+        
+        # Add overlays similar to what's shown in the UI
+        if hasattr(self, 'joint_tracker') and joint_data:
+            # Get joint history for metrics
+            joint_history = self.joint_tracker.get_joint_history()
+            
+            if joint_history:
+                # Calculate stability metrics
+                metrics = {}
+                try:
+                    metrics['sway_velocity'] = self.stability_metrics.calculate_sway_velocity(joint_history)
+                    metrics['dev_x'], metrics['dev_y'] = self.stability_metrics.calculate_postural_stability(joint_history)
+                    metrics['follow_through_score'] = self.stability_metrics.calculate_follow_through_score(
+                        joint_history, time.time())
+                    
+                    # Draw stability heatmap
+                    frame = self.draw_stability_heatmap(frame, metrics)
+                    
+                    # Add metrics text overlay
+                    frame = self.add_metrics_overlay(frame, metrics)
+                except Exception as e:
+                    print(f"Error adding overlays: {str(e)}")
+        
+        return frame
+
+    def save_current_metrics(self):
+        """Save the current metrics to the recording metadata."""
+        if not hasattr(self, 'recording_metadata'):
+            return
+        
+        joint_history = self.joint_tracker.get_joint_history()
+        if not joint_history:
+            return
+        
+        # Calculate metrics
+        try:
+            metrics = {
+                'timestamp': time.time() - self.recording_start_time,
+                'sway_velocity': self.stability_metrics.calculate_sway_velocity(joint_history),
+                'dev_x': self.stability_metrics.calculate_postural_stability(joint_history)[0],
+                'dev_y': self.stability_metrics.calculate_postural_stability(joint_history)[1],
+                'follow_through_score': self.stability_metrics.calculate_follow_through_score(
+                    joint_history, time.time())
+            }
+            
+            # Add to metadata
+            self.recording_metadata['metrics'].append(metrics)
+        except Exception as e:
+            print(f"Error saving metrics: {str(e)}")
+
+    def stop_recording(self):
+        """Stop and save the recording."""
+        if not hasattr(self, 'is_recording'):
+            return
+        
+        # Stop timer
+        if hasattr(self, 'recording_timer'):
+            self.recording_timer.stop()
+        
+        # Release video writer
+        if hasattr(self, 'video_writer'):
+            self.video_writer.release()
+            self.video_writer = None
+        
+        # Save metadata
+        if hasattr(self, 'recording_metadata') and hasattr(self, 'user_recordings_dir'):
+            metadata_filename = os.path.splitext(self.video_filename)[0] + ".json"
+            metadata_path = os.path.join(self.user_recordings_dir, metadata_filename)
+            
+            with open(metadata_path, 'w') as f:
+                json.dump(self.recording_metadata, f, indent=4)
+        
+        # Hide recording indicator
+        self.recording_indicator.setVisible(False)
+        
+        # Clear recording state
+        self.is_recording = False
+        delattr(self, 'recording_metadata')
+        delattr(self, 'video_filename')
+        delattr(self, 'video_path')
+        
+        # Show confirmation if appropriate
+        if not hasattr(self, 'ending_session') or not self.ending_session:
+            self.statusBar().showMessage("Recording saved successfully")
+
+    # Helper methods for visualization overlays
+    def draw_stability_heatmap(self, frame, metrics):
+        """Draw stability heatmap overlay based on metrics."""
+        # Create a copy to avoid modifying the original
+        overlay = frame.copy()
+        
+        # Get joint positions from the latest frame
+        joint_positions = {}
+        for joint_name in self.joint_tracker.TRACKED_JOINTS:
+            if joint_name in self.joint_tracker.joint_data.get('joints', {}):
+                joint = self.joint_tracker.joint_data['joints'][joint_name]
+                joint_positions[joint_name] = (int(joint['x']), int(joint['y']))
+        
+        # Get sway velocity for coloring
+        sway_velocities = metrics.get('sway_velocity', {})
+        
+        # Draw heatmap circles for each joint
+        for joint_name, (x, y) in joint_positions.items():
+            sway = sway_velocities.get(joint_name, 0)
+            
+            # Size based on importance
+            size = 30
+            if 'WRIST' in joint_name or 'ELBOW' in joint_name:
+                size = 40
+            
+            # Color based on stability
+            if sway < 5.0:  # Stable - green
+                color = (0, 255, 0)
+            elif sway < 10.0:  # Medium - yellow/orange
+                g = int(255 * (10.0 - sway) / 5.0)
+                color = (0, g, 255)
+            else:  # Unstable - red
+                color = (0, 0, 255)
+            
+            # Draw circle
+            cv2.circle(overlay, (x, y), size, color, -1)
+        
+        # Apply with transparency
+        alpha = 0.4
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        return frame
+
+    def add_metrics_overlay(self, frame, metrics):
+        """Add text overlay with metrics information."""
+        # Create background for text
+        h, w = frame.shape[:2]
+        x_offset = w - 260
+        y_offset = 10
+        overlay = np.zeros((150, 250, 3), dtype=np.uint8)
+        overlay[:, :] = (40, 40, 40)  # Dark gray
+        
+        # Add metrics text
+        stability_score = self._calculate_overall_stability(metrics)
+        cv2.putText(overlay, f"Stability: {int(stability_score*100)}%", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        follow_through = metrics.get('follow_through_score', 0)
+        cv2.putText(overlay, f"Follow-through: {follow_through:.2f}", (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Calculate average sway
+        sway_values = [metrics.get('sway_velocity', {}).get(joint, 0) for joint in 
+                    ['LEFT_WRIST', 'RIGHT_WRIST', 'LEFT_ELBOW', 'RIGHT_ELBOW']]
+        avg_sway = sum(sway_values) / max(1, len(sway_values))
+        cv2.putText(overlay, f"Avg Sway: {avg_sway:.2f} mm/s", (10, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Blend overlay with frame
+        roi = frame[y_offset:y_offset+150, x_offset:x_offset+250]
+        overlay_alpha = 0.7
+        cv2.addWeighted(overlay, overlay_alpha, roi, 1-overlay_alpha, 0, roi)
+        frame[y_offset:y_offset+150, x_offset:x_offset+250] = roi
+        
+        return frame
+    
+    def toggle_recording_state(self):
+        """Toggle the recording state without starting/stopping recording directly."""
+        # Just update the button state - actual recording will start/stop with analysis
+        is_enabled = self.record_enabled.isChecked()
+        
+        # Update feedback label instead of using statusBar
+        current_feedback = self.feedback_label.text()
+        if is_enabled:
+            self.feedback_label.setText("Recording enabled - will start with analysis")
+        else:
+            self.feedback_label.setText("Recording disabled")
+        
+        # Restore original feedback after 2 seconds
+        QTimer.singleShot(2000, lambda: self.feedback_label.setText(current_feedback))
+        
+        # If analysis is currently running and recording was just enabled, start recording now
+        if is_enabled and self.camera_running and not hasattr(self, 'is_recording'):
+            self.start_recording()
+        
+        # If analysis is running and recording was just disabled, stop recording now
+        if not is_enabled and hasattr(self, 'is_recording') and self.is_recording:
+            self.stop_recording()
+
+    def start_analysis(self):
+        """Start real-time analysis with automatic recording if enabled."""
+        # Start joint tracker
+        self.joint_tracker.start()
+        
+        # Start audio detection
+        self.start_audio_detection()
+        
+        # Start update timer
+        self.update_timer.start(33)  # ~30 FPS
+        
+        # Update UI
+        self.start_stop_button.setText("Stop Analysis")
+        self.camera_running = True
+        self.session_active = True
+        
+        if self.session_id:
+            self.manual_shot_button.setEnabled(True)
+        
+        # Start recording if enabled
+        if self.record_enabled.isChecked():
+            self.start_recording()
+        
+        # Update main window button if accessible
+        main_window = self.window()
+        if hasattr(main_window, 'session_button'):
+            main_window.session_button.setText("End Session")
+
+    def stop_analysis(self):
+        """Stop real-time analysis and pause recording if active."""
+        # Stop update timer
+        self.update_timer.stop()
+        
+        # Stop joint tracker
+        self.joint_tracker.stop()
+        
+        # Stop audio detection
+        self.stop_audio_detection()
+        
+        # Pause recording if active
+        if hasattr(self, 'is_recording') and self.is_recording:
+            self.pause_recording()
+        
+        # Update UI
+        self.start_stop_button.setText("Start Analysis")
+        self.camera_running = False
+        self.manual_shot_button.setEnabled(False)

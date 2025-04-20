@@ -288,7 +288,8 @@ class DashboardWidget(QWidget):
         layout.addWidget(value_label)
         
         # Save reference to update later
-        setattr(self, f"{title.lower().replace(' ', '_')}_label", value_label)
+        # In create_analytics_card method of DashboardWidget
+        setattr(self, f"{title.lower().replace(' ', '_').replace('-', '_')}_label", value_label)
         
         card.setLayout(layout)
         parent_layout.addWidget(card, row, col)

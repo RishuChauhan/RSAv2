@@ -17,7 +17,8 @@ from src.data_storage import DataStorage
 
 class ReplayWidget(QWidget):
     """
-    Widget for recording and replaying shooting sessions with analysis overlays.
+    Widget for replaying and analyzing recorded shooting sessions.
+    Allows playback of recordings with analysis overlays.
     """
     
     def __init__(self, data_storage: DataStorage):
@@ -34,7 +35,6 @@ class ReplayWidget(QWidget):
         self.session_id = None
         
         # Replay state
-        self.is_recording = False
         self.is_playing = False
         self.current_recording = None
         self.playback_timer = QTimer()
@@ -58,12 +58,13 @@ class ReplayWidget(QWidget):
         self.session_selector.currentIndexChanged.connect(self.on_session_changed)
         control_layout.addWidget(self.session_selector)
         
-        # Recording controls
-        self.record_button = QPushButton("Start Recording")
-        self.record_button.clicked.connect(self.toggle_recording)
-        control_layout.addWidget(self.record_button)
-        
+        # Add more spacing
         control_layout.addStretch()
+        
+        # Add playback recordings label (bold)
+        sessions_label = QLabel("Playback Recordings:")
+        sessions_label.setStyleSheet("font-weight: bold;")
+        control_layout.addWidget(sessions_label)
         
         # Status label
         self.status_label = QLabel("Ready")
@@ -82,6 +83,13 @@ class ReplayWidget(QWidget):
         self.recordings_list = QListWidget()
         self.recordings_list.itemSelectionChanged.connect(self.on_recording_selected)
         recordings_layout.addWidget(self.recordings_list)
+        
+        # Add refresh button
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_BrowserReload))
+        self.refresh_button.clicked.connect(self.load_recordings)
+        self.refresh_button.setToolTip("Refresh the recordings list")
+        recordings_layout.addWidget(self.refresh_button)
         
         # Delete recording button
         self.delete_button = QPushButton("Delete Selected")
@@ -108,6 +116,7 @@ class ReplayWidget(QWidget):
         self.play_button = QPushButton("Play")
         self.play_button.clicked.connect(self.toggle_playback)
         self.play_button.setEnabled(False)
+        self.play_button.setToolTip("Play selected recording")
         playback_controls.addWidget(self.play_button)
         
         # Timeline slider
@@ -258,7 +267,6 @@ class ReplayWidget(QWidget):
         """
         if index <= 0:  # "Select a session..." item
             self.session_id = None
-            self.record_button.setEnabled(False)
             return
         
         # Get session ID from combobox data
@@ -266,7 +274,6 @@ class ReplayWidget(QWidget):
         
         if session_id > 0:
             self.session_id = session_id
-            self.record_button.setEnabled(True)
     
     def load_recordings(self):
         """Load recordings for the current user."""
@@ -277,20 +284,21 @@ class ReplayWidget(QWidget):
         self.recordings_list.clear()
         
         # Check if directory exists
-        if not os.path.exists(self.user_recordings_dir):
+        user_recordings_dir = os.path.join("data/recordings", f"user_{self.user_id}")
+        if not os.path.exists(user_recordings_dir):
             return
         
         # Get all recording metadata files
-        for filename in os.listdir(self.user_recordings_dir):
+        for filename in os.listdir(user_recordings_dir):
             if filename.endswith(".json"):
                 # Load metadata
-                metadata_path = os.path.join(self.user_recordings_dir, filename)
+                metadata_path = os.path.join(user_recordings_dir, filename)
                 try:
                     with open(metadata_path, 'r') as f:
                         metadata = json.load(f)
                     
                     # Check if video file exists
-                    video_path = os.path.join(self.user_recordings_dir, metadata.get('video_file', ''))
+                    video_path = os.path.join(user_recordings_dir, metadata.get('video_file', ''))
                     if not os.path.exists(video_path):
                         continue
                     
@@ -312,130 +320,6 @@ class ReplayWidget(QWidget):
                     
                 except Exception as e:
                     print(f"Error loading recording metadata: {str(e)}")
-    
-    def toggle_recording(self):
-        """Toggle recording state."""
-        if not self.session_id:
-            return
-        
-        if not self.is_recording:
-            self.start_recording()
-        else:
-            self.stop_recording()
-    
-    def start_recording(self):
-        """Start recording the current session."""
-        # Get session details
-        self.cursor = self.data_storage.conn.cursor()
-        self.cursor.execute("SELECT name FROM sessions WHERE id = ?", (self.session_id,))
-        session = self.cursor.fetchone()
-        
-        if not session:
-            return
-        
-        # Initialize camera
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Error", "Could not open camera.")
-            return
-        
-        # Set camera properties
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
-        
-        # Get video properties
-        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(self.cap.get(cv2.CAP_PROP_FPS))
-        
-        # Create filename with timestamp
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        video_filename = f"session_{self.session_id}_{timestamp}.mp4"
-        video_path = os.path.join(self.user_recordings_dir, video_filename)
-        
-        # Initialize video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
-        
-        # Create metadata
-        self.recording_metadata = {
-            'user_id': self.user_id,
-            'session_id': self.session_id,
-            'session_name': session['name'],
-            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
-            'video_file': video_filename,
-            'width': width,
-            'height': height,
-            'fps': fps,
-            'metrics': [],
-            'duration': 0
-        }
-        
-        # Update UI
-        self.record_button.setText("Stop Recording")
-        self.status_label.setText("Recording...")
-        self.is_recording = True
-        
-        # Start recording timer
-        self.recording_start_time = time.time()
-        self.recording_timer = QTimer()
-        self.recording_timer.timeout.connect(self.update_recording)
-        self.recording_timer.start(33)  # ~30 FPS
-    
-    def update_recording(self):
-        """Update recording with new frame."""
-        if not self.is_recording or not self.cap.isOpened():
-            return
-        
-        # Read frame
-        ret, frame = self.cap.read()
-        if not ret:
-            self.stop_recording()
-            return
-        
-        # Record frame
-        self.video_writer.write(frame)
-        
-        # Display frame
-        self.update_display(frame)
-        
-        # Update duration in metadata
-        self.recording_metadata['duration'] = time.time() - self.recording_start_time
-        
-        # Update time label
-        duration = self.recording_metadata['duration']
-        minutes = int(duration // 60)
-        seconds = int(duration % 60)
-        self.time_label.setText(f"{minutes}:{seconds:02d}")
-    
-    def stop_recording(self):
-        """Stop recording and save metadata."""
-        if not self.is_recording:
-            return
-        
-        # Stop timer
-        self.recording_timer.stop()
-        
-        # Release resources
-        self.video_writer.release()
-        self.cap.release()
-        
-        # Save metadata
-        metadata_filename = os.path.splitext(self.recording_metadata['video_file'])[0] + ".json"
-        metadata_path = os.path.join(self.user_recordings_dir, metadata_filename)
-        
-        with open(metadata_path, 'w') as f:
-            json.dump(self.recording_metadata, f, indent=4)
-        
-        # Update UI
-        self.record_button.setText("Start Recording")
-        self.status_label.setText("Recording saved")
-        self.is_recording = False
-        
-        # Reload recordings list
-        self.load_recordings()
     
     def on_recording_selected(self):
         """Handle recording selection change."""
@@ -800,10 +684,6 @@ class ReplayWidget(QWidget):
     
     def closeEvent(self, event):
         """Handle widget close event."""
-        # Stop recording if active
-        if self.is_recording:
-            self.stop_recording()
-        
         # Stop playback if active
         if self.is_playing:
             self.pause_playback()
@@ -815,36 +695,24 @@ class ReplayWidget(QWidget):
         event.accept()
 
     def set_session(self, session_id: int):
-        """
-        Set the current session.
-        
-        Args:
-            session_id: ID of the session
-        """
+        """Set the current session with proper refresh logic."""
         if session_id <= 0:
             return
-            
-        # Update selector to match
+        
+        # Force refresh recordings list after setting session
+        self.session_id = session_id
+        
+        # Clear current selection
+        self.current_recording = None
+        
+        # Update the session selector
         for i in range(self.session_selector.count()):
             if self.session_selector.itemData(i) == session_id:
                 self.session_selector.setCurrentIndex(i)
-                return
+                break
         
-        # If not found in selector, add it
-        if session_id > 0:
-            # Get session details
-            self.cursor = self.data_storage.conn.cursor()
-            self.cursor.execute("SELECT name, created_at FROM sessions WHERE id = ?", (session_id,))
-            session = self.cursor.fetchone()
-            
-            if session:
-                session_text = f"{session['name']} ({session['created_at'][:10]})"
-                # Add to dropdown if not already there
-                self.session_selector.addItem(session_text, session_id)
-                self.session_selector.setCurrentIndex(self.session_selector.count() - 1)
-            else:
-                # If session not found, just set ID
-                self.session_id = session_id
+        # Reload recordings list
+        self.load_recordings()
 
     def _generate_joint_positions(self, frame_position):
         """
@@ -982,19 +850,21 @@ class ReplayWidget(QWidget):
         
         # Draw joints
         for joint, (x, y) in joint_positions.items():
-            cv2.circle(frame, (x, y), 8, (0, 255, 255), -1)  # Yellow filled circle
-            cv2.circle(frame, (x, y), 8, (0, 0, 0), 2)       # Black outline
+        # Ensure coordinates are within frame dimensions
+            x = max(0, min(x, frame.shape[1]-1))
+            y = max(0, min(y, frame.shape[0]-1))
             
-            # Add joint labels
-            cv2.putText(frame, joint.replace('_', ' '), (x + 10, y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # Draw larger, more visible circles
+            cv2.circle(frame, (int(x), int(y)), 8, (0, 255, 255), -1)  # Filled circle
+            cv2.circle(frame, (int(x), int(y)), 8, (0, 0, 0), 2)       # Black outline
         
         # Draw connections
         for joint1, joint2 in connections:
             if joint1 in joint_positions and joint2 in joint_positions:
                 pt1 = joint_positions[joint1]
                 pt2 = joint_positions[joint2]
-                cv2.line(frame, pt1, pt2, (0, 255, 255), 2)  # Yellow lines
+                cv2.line(frame, (int(pt1[0]), int(pt1[1])), 
+                            (int(pt2[0]), int(pt2[1])), (0, 255, 255), 2) # Yellow lines
         
         return frame
 

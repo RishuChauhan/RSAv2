@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import math 
 import time
 from typing import Dict, List, Tuple, Optional
 
@@ -255,3 +256,32 @@ class JointTracker:
                 spec.color, 
                 spec.thickness
             )
+
+    def start(self):
+        """Start the tracking process."""
+        # Initialize or reset the video capture if needed
+        if self.cap is None or not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.camera_index)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
+        
+        # Reset tracking data
+        self.joint_data = {}
+        self.joint_history = []
+        self.joint_stability = {}
+
+    def stop(self):
+        """Stop the tracking process."""
+        if self.cap is not None and self.cap.isOpened():
+            self.cap.release()
+            self.cap = None
+
+    def get_joint_history(self):
+        """
+        Get the history of joint positions.
+        
+        Returns:
+            List of joint data dictionaries
+        """
+        return self.joint_history

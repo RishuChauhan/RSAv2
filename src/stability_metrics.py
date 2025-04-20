@@ -211,6 +211,12 @@ class StabilityMetrics:
         Returns:
             Follow-through score between 0 and 1 (higher is better)
         """
+        # If shot_time not provided, use the timestamp of the first frame
+        if shot_time is None:
+            if not joint_history:
+                return 0.0
+                shot_time = joint_history[0]['timestamp']
+        
         # Only keep frames from [shot_time, shot_time + post_window]
         post = [f for f in joint_history if shot_time <= f['timestamp'] <= shot_time + post_window]
         
@@ -219,7 +225,8 @@ class StabilityMetrics:
         
         # Need at least 2 frames to calculate velocities and deviations
         if len(post) < 2:
-            return 0.0
+            print("Using entire history for follow-through calculation")
+            post = joint_history
         
         # Calculate sway velocity on post-shot window
         sway_velocities = {}
@@ -373,6 +380,9 @@ class StabilityMetrics:
         # F(t) = 1/(1+e^(-u))
         # Now higher u (better stability) → F closer to 1
         follow_through = 1.0 / (1.0 + math.exp(-u))
+
+        if not post or len(post) < 2:
+            return 0.1 
         
         return follow_through
     
