@@ -202,6 +202,7 @@ class StabilityMetrics:
     def calculate_follow_through_score(self, joint_history: List[Dict], shot_time: float, post_window: float = 1.0) -> float:
         """
         Calculate follow-through score based on stability in the 1-second window AFTER the shot.
+        A robust implementation that ensures proper post-shot analysis.
         
         Args:
             joint_history: List of joint data dictionaries with timestamps
@@ -211,180 +212,150 @@ class StabilityMetrics:
         Returns:
             Follow-through score between 0 and 1 (higher is better)
         """
-        # If shot_time not provided, use the timestamp of the first frame
+        # Validate inputs
+        if not joint_history:
+            print("Warning: Empty joint history provided")
+            return 0.1
+        
+        # Validate shot_time - if not provided, use a reasonable default
         if shot_time is None:
-            if not joint_history:
-                return 0.0
-                shot_time = joint_history[0]['timestamp']
+            print("Warning: No shot time provided, using last frame timestamp - 1.0s")
+            try:
+                shot_time = joint_history[-1]['timestamp'] - 1.0
+            except (KeyError, IndexError):
+                print("Error: Cannot determine shot time from joint history")
+                return 0.1
         
-        # Only keep frames from [shot_time, shot_time + post_window]
-        post = [f for f in joint_history if shot_time <= f['timestamp'] <= shot_time + post_window]
+        # Extract only post-shot frames [shot_time, shot_time + post_window]
+        post_shot_frames = []
+        for frame in joint_history:
+            try:
+                frame_time = frame['timestamp']
+                if shot_time <= frame_time <= shot_time + post_window:
+                    post_shot_frames.append(frame)
+            except (KeyError, TypeError) as e:
+                print(f"Warning: Error extracting timestamp from frame: {e}")
+                continue
         
-        # Alternative using the _slice_window helper:
-        # post = self._slice_window(joint_history, window_sec=post_window, end_time=shot_time + post_window)
+        # Check if we have enough frames in post-shot window
+        if len(post_shot_frames) < 2:
+            print(f"Warning: Not enough frames in post-shot window ({len(post_shot_frames)} frames). Need at least 2.")
+            # IMPORTANT: Return a low score instead of using the entire history
+            # This ensures we don't falsely evaluate follow-through when we have insufficient data
+            return 0.2
         
-        # Need at least 2 frames to calculate velocities and deviations
-        if len(post) < 2:
-            print("Using entire history for follow-through calculation")
-            post = joint_history
+        # Sort frames by timestamp to ensure proper order
+        post_shot_frames = sorted(post_shot_frames, key=lambda x: x.get('timestamp', 0))
         
-        # Calculate sway velocity on post-shot window
-        sway_velocities = {}
+        # ========== STABILITY CALCULATION ==========
+        # Calculate joint stability in the post-shot window using a simplified approach
         
-        # Sort by timestamp to ensure correct calculation
-        sorted_history = sorted(post, key=lambda x: x['timestamp'])
-        
-        # Get all unique joint names from the first entry
-        if not sorted_history or 'joints' not in sorted_history[0]:
-            return 0.0
-            
-        joint_names = sorted_history[0]['joints'].keys()
-        
-        # Calculate velocities for each joint
-        for joint_name in joint_names:
-            velocities = []
-            
-            for i in range(1, len(sorted_history)):
-                prev_data = sorted_history[i-1]
-                curr_data = sorted_history[i]
-                
-                # Skip if joint data is missing
-                if (joint_name not in prev_data['joints'] or 
-                    joint_name not in curr_data['joints']):
-                    continue
-                
-                prev_joint = prev_data['joints'][joint_name]
-                curr_joint = curr_data['joints'][joint_name]
-                
-                # Time difference between samples
-                dt = curr_data['timestamp'] - prev_data['timestamp']
-                if dt <= 0:
-                    continue  # Skip invalid time differences
-                
-                # Calculate Euclidean distance in 3D
-                dx = curr_joint['x'] - prev_joint['x']
-                dy = curr_joint['y'] - prev_joint['y']
-                dz = curr_joint['z'] - prev_joint['z']
-                
-                distance = math.sqrt(dx*dx + dy*dy + dz*dz)
-                
-                # Velocity = distance / time
-                velocity = distance / dt
-                velocities.append(velocity)
-            
-            # Calculate average velocity if we have data
-            if velocities:
-                avg_velocity = sum(velocities) / len(velocities)
-                sway_velocities[joint_name] = avg_velocity
-            else:
-                sway_velocities[joint_name] = 0.0
-        
-        # Calculate postural stability on post-shot window
-        # Extract X and Y coordinates for each joint
-        joint_coords = {joint: {'x': [], 'y': []} for joint in joint_names}
-        
-        for data in sorted_history:
-            for joint_name in joint_names:
-                if joint_name in data['joints']:
-                    joint = data['joints'][joint_name]
-                    joint_coords[joint_name]['x'].append(joint['x'])
-                    joint_coords[joint_name]['y'].append(joint['y'])
-        
-        # Calculate standard deviation for each joint
-        dev_x = {}
-        dev_y = {}
-        
-        for joint_name in joint_names:
-            x_coords = joint_coords[joint_name]['x']
-            y_coords = joint_coords[joint_name]['y']
-            
-            if x_coords and y_coords:
-                dev_x[joint_name] = np.std(x_coords)
-                dev_y[joint_name] = np.std(y_coords)
-            else:
-                dev_x[joint_name] = 0.0
-                dev_y[joint_name] = 0.0
-        
-        # Calculate weighted sway sum
-        w_sway = 0.0
-        weights_sum = 0.0
-        
-        # Map individual joints to groups for weighting
-        joint_to_group = {
-            'LEFT_SHOULDER': 'SHOULDERS', 'RIGHT_SHOULDER': 'SHOULDERS',
-            'LEFT_ELBOW': 'ELBOWS', 'RIGHT_ELBOW': 'ELBOWS',
-            'LEFT_WRIST': 'WRISTS', 'RIGHT_WRIST': 'WRISTS',
-            'NOSE': 'NOSE'
+        # Track movement for key joints (upper body joints most relevant for shooting)
+        key_joint_groups = {
+            'SHOULDERS': ['LEFT_SHOULDER', 'RIGHT_SHOULDER'],
+            'ELBOWS': ['LEFT_ELBOW', 'RIGHT_ELBOW'],
+            'WRISTS': ['LEFT_WRIST', 'RIGHT_WRIST'],
+            'NOSE': ['NOSE']
         }
         
-        for joint, velocity in sway_velocities.items():
-            if joint in joint_to_group:
-                group = joint_to_group[joint]
-                if group in self.joint_weights:
-                    weight = self.joint_weights[group]
-                    w_sway += weight * velocity
-                    weights_sum += weight
+        # Joint importance weights
+        joint_weights = {
+            'SHOULDERS': 0.2,
+            'ELBOWS': 0.3,
+            'WRISTS': 0.4,
+            'NOSE': 0.1
+        }
         
-        # Normalize if we have weights
-        if weights_sum > 0:
-            w_sway /= weights_sum
+        # Calculate average movement for each joint group
+        joint_movement = {group: 0.0 for group in key_joint_groups}
+        joint_counts = {group: 0 for group in key_joint_groups}
         
-        # Calculate postural deviation penalty
-        p_dev = 0.0
-        
-        # Calculate mean positions for reference
-        mean_positions = {}
-        for joint in joint_to_group.keys():
-            x_coords = []
-            y_coords = []
+        # Process each frame pair to calculate movement
+        for i in range(1, len(post_shot_frames)):
+            curr_frame = post_shot_frames[i]
+            prev_frame = post_shot_frames[i-1]
             
-            for data in sorted_history:
-                if 'joints' in data and joint in data['joints']:
-                    x_coords.append(data['joints'][joint]['x'])
-                    y_coords.append(data['joints'][joint]['y'])
+            # Calculate time difference
+            try:
+                dt = curr_frame['timestamp'] - prev_frame['timestamp']
+                if dt <= 0:
+                    continue  # Skip invalid time differences
+            except (KeyError, TypeError):
+                continue  # Skip frames with invalid timestamps
             
-            if x_coords and y_coords:
-                mean_positions[joint] = {
-                    'x': np.mean(x_coords),
-                    'y': np.mean(y_coords)
-                }
-        
-        # Calculate deviations from mean positions
-        for data in sorted_history:
-            if 'joints' not in data:
-                continue
+            # Check all joint groups
+            for group, joints in key_joint_groups.items():
+                group_movement = 0.0
+                group_count = 0
                 
-            for joint in joint_to_group.keys():
-                if joint in data['joints'] and joint in mean_positions:
-                    j_data = data['joints'][joint]
-                    mean_pos = mean_positions[joint]
-                    
-                    # Absolute deviations
-                    dev_x_val = abs(j_data['x'] - mean_pos['x'])
-                    dev_y_val = abs(j_data['y'] - mean_pos['y'])
-                    
-                    # Add weighted deviations to penalty
-                    p_dev += (self.postural_weights['x'] * dev_x_val + 
-                            self.postural_weights['y'] * dev_y_val)
+                # Calculate movement for each joint in the group
+                for joint_name in joints:
+                    try:
+                        # Extract previous and current positions
+                        if ('joints' not in prev_frame or joint_name not in prev_frame['joints'] or
+                            'joints' not in curr_frame or joint_name not in curr_frame['joints']):
+                            continue
+                        
+                        prev_joint = prev_frame['joints'][joint_name]
+                        curr_joint = curr_frame['joints'][joint_name]
+                        
+                        # Check for required fields
+                        if not all(k in prev_joint for k in ['x', 'y', 'z']) or not all(k in curr_joint for k in ['x', 'y', 'z']):
+                            continue
+                        
+                        # Calculate Euclidean distance in 3D
+                        dx = curr_joint['x'] - prev_joint['x']
+                        dy = curr_joint['y'] - prev_joint['y']
+                        dz = curr_joint['z'] - prev_joint['z']
+                        
+                        distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+                        
+                        # Movement rate (distance/time)
+                        movement_rate = distance / dt
+                        
+                        group_movement += movement_rate
+                        group_count += 1
+                    except (KeyError, TypeError, ZeroDivisionError) as e:
+                        print(f"Warning: Error calculating movement for {joint_name}: {e}")
+                        continue
+                
+                # Add the average movement for this group
+                if group_count > 0:
+                    joint_movement[group] += group_movement / group_count
+                    joint_counts[group] += 1
         
-        # Normalize by number of data points and joints
-        data_points = len(sorted_history)
-        joint_count = len(joint_to_group)
-        if data_points > 0 and joint_count > 0:
-            p_dev /= (data_points * joint_count)
+        # Calculate average movement per group
+        avg_movements = {}
+        for group in key_joint_groups:
+            if joint_counts[group] > 0:
+                avg_movements[group] = joint_movement[group] / joint_counts[group]
+            else:
+                avg_movements[group] = 0.0
         
-        # Compute combined score with negation to make it a "higher is better" scale
-        u = -(self.lambda_sway * w_sway + self.lambda_dev * p_dev)
+        # Calculate weighted stability score (inverse of movement - less movement is more stable)
+        weighted_score = 0.0
+        total_weight = 0.0
         
-        # Compute follow-through score with classic sigmoid
-        # F(t) = 1/(1+e^(-u))
-        # Now higher u (better stability) → F closer to 1
-        follow_through = 1.0 / (1.0 + math.exp(-u))
-
-        if not post or len(post) < 2:
-            return 0.1 
+        for group, movement in avg_movements.items():
+            weight = joint_weights.get(group, 0.0)
+            
+            # Convert movement to stability (0-1 scale, smaller movement = higher stability)
+            # Calibrated thresholds: 0 mm/s → 1.0 stability, 20+ mm/s → 0.0 stability
+            stability = max(0.0, 1.0 - (movement / 20.0))
+            
+            weighted_score += weight * stability
+            total_weight += weight
         
-        return follow_through
+        # Calculate final follow-through score
+        if total_weight > 0:
+            follow_through_score = weighted_score / total_weight
+        else:
+            follow_through_score = 0.3  # Default score if weighting fails
+        
+        # Sanity check to ensure score is in valid range [0,1]
+        follow_through_score = max(0.0, min(1.0, follow_through_score))
+        
+        return follow_through_score
     
     def compare_to_baseline(self, metrics: Dict, metric_type: str) -> Dict:
         """
@@ -487,4 +458,3 @@ class StabilityMetrics:
         # For pre-shot windows: frames between [t_end - window_sec, t_end]
         # For post-shot windows: frames between [t_end - window_sec, t_end]
         return [f for f in history if cutoff <= f['timestamp'] <= t_end]
-

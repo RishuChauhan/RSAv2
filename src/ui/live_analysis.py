@@ -211,6 +211,7 @@ class LiveAnalysisWidget(QWidget):
         self.camera_running = False
         self.audio_detection_running = False
 
+        self.gauge_history = []
     
     def init_ui(self):
         """Initialize the user interface elements with professional styling."""
@@ -870,7 +871,10 @@ class LiveAnalysisWidget(QWidget):
         self.follow_through_label.setStyleSheet(f"color: rgb({r}, {g}, 0); font-weight: bold;")
     
     def handle_shot_detection(self):
-        """Handle shot detection (triggered by audio or manually) with session stats tracking."""
+        """
+        Handle shot detection (triggered by audio or manually) with improved follow-through calculation.
+        Uses a two-phase approach to ensure post-shot frames are collected for follow-through analysis.
+        """
         if not self.session_id:
             QMessageBox.warning(self, "No Session", "Please create a session first.")
             return
@@ -878,109 +882,53 @@ class LiveAnalysisWidget(QWidget):
         # Get joint history for the shot
         joint_history = self.joint_tracker.get_joint_history()
         
-        if not joint_history:
+        if not joint_history or len(joint_history) == 0:
             QMessageBox.warning(self, "No Data", "No joint tracking data available.")
             return
         
-        # Debug: Print joint history length
+        # IMPORTANT: Use the timestamp of the latest frame as the shot time
+        # This ensures the shot time is properly aligned with your tracking timestamps
+        latest_frame = joint_history[-1]
+        shot_timestamp = latest_frame['timestamp']
+        self.last_shot_time = shot_timestamp
+        
+        print(f"Shot detected at time: {shot_timestamp}")
         print(f"Joint history length: {len(joint_history)}")
         
-        # Get the current time for shot time parameter
-        current_time = time.time()
+        if len(joint_history) > 0:
+            first_ts = joint_history[0].get('timestamp', 0)
+            last_ts = joint_history[-1].get('timestamp', 0)
+            print(f"History time range: {first_ts:.3f} to {last_ts:.3f} (span: {last_ts - first_ts:.3f}s)")
         
         # Calculate metrics for the shot
         sway_velocities = self.stability_metrics.calculate_sway_velocity(joint_history)
         dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
         
-        # Fix: Add shot_time parameter
-        follow_through = self.stability_metrics.calculate_follow_through_score(
-            joint_history, 
-            shot_time=current_time,  # Pass current time as shot_time
-            post_window=1.0
-        )
-        
-        # Extract ONLY the current joint positions from the latest frame
+        # Store the initial joint positions at shot time
         current_joint_positions = {}
-        if joint_history and len(joint_history) > 0 and 'joints' in joint_history[-1]:
-            current_joint_positions = joint_history[-1]['joints']
+        if 'joints' in latest_frame:
+            current_joint_positions = latest_frame['joints']
             print(f"Captured positions for joints: {list(current_joint_positions.keys())}")
-        else:
-            print("WARNING: No joint positions found in latest frame")
         
-        # Combine metrics
-        metrics = {
-            'sway_velocity': sway_velocities,
+        # Store metrics and information needed for delayed processing
+        self.pending_shot_data = {
+            'timestamp': shot_timestamp,
+            'initial_joint_history': joint_history.copy(),
+            'sway_velocities': sway_velocities,
             'dev_x': dev_x,
             'dev_y': dev_y,
-            'follow_through_score': follow_through,
-            'joint_positions': current_joint_positions  # Store exact position at shot time
+            'joint_positions': current_joint_positions
         }
         
-        # Use a custom dialog for decimal score entry
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDoubleSpinBox
+        # Show feedback to the user about follow-through collection
+        self.feedback_label.setText("Shot detected! Collecting follow-through data...")
         
-        score_dialog = QDialog(self)
-        score_dialog.setWindowTitle("Shot Recorded")
-        score_dialog.setFixedWidth(300)
+        # Wait to collect post-shot frames (1.5 seconds should be enough to get frames for the 1.0s window)
+        QTimer.singleShot(1500, self.complete_shot_processing)
         
-        layout = QVBoxLayout()
-        
-        # Add label
-        layout.addWidget(QLabel("Enter score (0.00-10.9):"))
-        
-        # Create double spin box for decimal scores
-        score_spinner = QDoubleSpinBox()
-        score_spinner.setRange(0.0, 10.9)
-        score_spinner.setDecimals(1)  # Allow one decimal place
-        score_spinner.setSingleStep(0.1)
-        score_spinner.setValue(10.9)  # Default to 10.9
-        layout.addWidget(score_spinner)
-        
-        # Add buttons
-        button_layout = QHBoxLayout()
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(score_dialog.reject)
-        ok_button = QPushButton("OK")
-        ok_button.clicked.connect(score_dialog.accept)
-        ok_button.setDefault(True)
-        
-        button_layout.addWidget(cancel_button)
-        button_layout.addWidget(ok_button)
-        layout.addLayout(button_layout)
-        
-        score_dialog.setLayout(layout)
-        
-        if score_dialog.exec() == QDialog.DialogCode.Accepted:
-            score = score_spinner.value()
-            
-            # Store shot data
-            shot_id = self.data_storage.store_shot(self.session_id, metrics, score)
-            
-            if shot_id > 0:
-                # Track session stats
-                self.session_shots += 1
-                self.session_scores.append(score)
-                
-                # Get user's current baseline
-                baseline = self.data_storage.get_baseline(self.user_id)
-                current_best_score = baseline['subjective_score'] if baseline else 0
-                
-                # Update baseline if this is a better shot
-                if score > current_best_score:
-                    self.stability_metrics.update_baseline(joint_history, score, current_best_score)
-                    self.data_storage.update_baseline(
-                        self.user_id, 
-                        self.stability_metrics.baseline_metrics, 
-                        score
-                    )
-                    QMessageBox.information(self, "New Baseline", 
-                                        "New baseline set with this shot!")
-                
-                # Show confirmation
-                QMessageBox.information(self, "Shot Recorded", 
-                                    f"Shot recorded with score: {score}")
-            else:
-                QMessageBox.critical(self, "Error", "Failed to store shot data.")
+        # Change the button state to indicate waiting
+        self.manual_shot_button.setEnabled(False)
+        self.manual_shot_button.setText("Processing...")
     
     def manual_shot_detection(self):
         """Manually trigger shot detection."""
@@ -1020,8 +968,21 @@ class LiveAnalysisWidget(QWidget):
                     sway_velocities = self.stability_metrics.calculate_sway_velocity(joint_history)
                     dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
 
-                    current_time = time.time()
-                    follow_through = self.stability_metrics.calculate_follow_through_score(joint_history, current_time)
+                    # For real-time analysis, we should NOT try to calculate follow-through
+                    # since we haven't had a shot yet
+                    follow_through = 0.0  # Default value during normal tracking
+                    
+                    # Only show a follow-through score if we're in post-shot mode
+                    if hasattr(self, 'last_shot_time') and self.last_shot_time:
+                        # Only calculate follow-through if we're within 3 seconds after the shot
+                        time_since_shot = time.time() - self.last_shot_time
+                        if time_since_shot < 3.0:
+                            # Use the actual shot time for follow-through calculation
+                            follow_through = self.stability_metrics.calculate_follow_through_score(
+                                joint_history, 
+                                shot_time=self.last_shot_time,
+                                post_window=1.0
+                            )
                     
                     # Combine metrics for feedback with validation
                     metrics = {
@@ -1055,7 +1016,7 @@ class LiveAnalysisWidget(QWidget):
         
     def _calculate_overall_stability(self, metrics: Dict) -> float:
         """
-        Calculate an overall stability score from multiple metrics.
+        Calculate an overall stability score from sway velocity and positional deviation metrics.
         This provides a more accurate representation than just using the fuzzy feedback score.
         
         Args:
@@ -1068,7 +1029,6 @@ class LiveAnalysisWidget(QWidget):
         sway_metrics = metrics.get('sway_velocity', {})
         dev_x_metrics = metrics.get('dev_x', {})
         dev_y_metrics = metrics.get('dev_y', {})
-        follow_through = metrics.get('follow_through_score', 0.5)
         
         # Calculate average sway for upper body (most important for shooting)
         upper_body_joints = ['SHOULDERS', 'ELBOWS', 'WRISTS', 'NOSE']
@@ -1087,13 +1047,12 @@ class LiveAnalysisWidget(QWidget):
         norm_dev_x = max(0, 1 - (avg_dev_x / 30.0))
         norm_dev_y = max(0, 1 - (avg_dev_y / 30.0))
         
-        # Weighted combination of all factors
-        # Follow-through and sway are most important for shooting
+        # Weighted combination of factors - rebalanced without follow-through
+        # Sway is most important for shooting stability
         stability_score = (
-            0.4 * follow_through +   # Follow-through (40% weight)
-            0.3 * norm_sway +        # Sway stability (30% weight)
-            0.15 * norm_dev_x +      # Horizontal stability (15% weight)
-            0.15 * norm_dev_y        # Vertical stability (15% weight)
+            0.6 * norm_sway +        # Sway stability (60% weight)
+            0.2 * norm_dev_x +       # Horizontal stability (20% weight)
+            0.2 * norm_dev_y         # Vertical stability (20% weight)
         )
         
         # Ensure value is in 0-1 range
@@ -1494,7 +1453,9 @@ class LiveAnalysisWidget(QWidget):
 
     def start_analysis(self):
         """Start real-time analysis with automatic recording if enabled."""
-        # Start joint tracker
+        # Reset shot detection and follow-through state
+        if hasattr(self, 'last_shot_time'):
+            delattr(self, 'last_shot_time')
         self.joint_tracker.start()
         
         # Start audio detection
@@ -1539,3 +1500,127 @@ class LiveAnalysisWidget(QWidget):
         self.start_stop_button.setText("Start Analysis")
         self.camera_running = False
         self.manual_shot_button.setEnabled(False)
+
+    def complete_shot_processing(self):
+        """Complete shot processing after collecting post-shot frames for follow-through analysis."""
+        # Restore button state
+        self.manual_shot_button.setEnabled(True)
+        self.manual_shot_button.setText("Record Shot")
+        
+        # Retrieve the pending shot data
+        if not hasattr(self, 'pending_shot_data'):
+            print("Error: No pending shot data found")
+            return
+        
+        # Get stored data
+        shot_timestamp = self.pending_shot_data['timestamp']
+        sway_velocities = self.pending_shot_data['sway_velocities']
+        dev_x = self.pending_shot_data['dev_x']
+        dev_y = self.pending_shot_data['dev_y']
+        initial_positions = self.pending_shot_data['joint_positions']
+        
+        # Get the updated joint history which should now include post-shot frames
+        updated_joint_history = self.joint_tracker.get_joint_history()
+        
+        initial_history_length = len(self.pending_shot_data['initial_joint_history'])
+        updated_history_length = len(updated_joint_history)
+        print(f"Original history length: {initial_history_length}")
+        print(f"Updated history length: {updated_history_length}")
+        print(f"New frames collected: {updated_history_length - initial_history_length}")
+        
+        # Debug timestamps
+        if updated_history_length > 0:
+            first_ts = updated_joint_history[0].get('timestamp', 0)
+            last_ts = updated_joint_history[-1].get('timestamp', 0)
+            print(f"Updated history range: {first_ts:.3f} to {last_ts:.3f} (span: {last_ts - first_ts:.3f}s)")
+            print(f"Post-shot time available: {last_ts - shot_timestamp:.3f}s")
+        
+        # Calculate follow-through using the updated joint history
+        print(f"Calculating follow-through with shot_time={shot_timestamp}")
+        follow_through = self.stability_metrics.calculate_follow_through_score(
+            updated_joint_history,
+            shot_time=shot_timestamp,
+            post_window=1.0
+        )
+        print(f"Follow-through score: {follow_through:.3f}")
+        
+        # Combine metrics
+        metrics = {
+            'sway_velocity': sway_velocities,
+            'dev_x': dev_x,
+            'dev_y': dev_y,
+            'follow_through_score': follow_through,
+            'joint_positions': initial_positions,
+            'shot_time': shot_timestamp
+        }
+        
+        # Use a custom dialog for decimal score entry
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDoubleSpinBox
+        
+        score_dialog = QDialog(self)
+        score_dialog.setWindowTitle("Shot Recorded")
+        score_dialog.setFixedWidth(300)
+        
+        layout = QVBoxLayout()
+        
+        # Add label with follow-through score for reference
+        layout.addWidget(QLabel(f"Follow-through Score: {follow_through:.2f}"))
+        layout.addWidget(QLabel("Enter score (0.00-10.9):"))
+        
+        # Create double spin box for decimal scores
+        score_spinner = QDoubleSpinBox()
+        score_spinner.setRange(0.0, 10.9)
+        score_spinner.setDecimals(1)  # Allow one decimal place
+        score_spinner.setSingleStep(0.1)
+        score_spinner.setValue(10.9)  # Default to 10.9
+        layout.addWidget(score_spinner)
+        
+        # Add buttons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(score_dialog.reject)
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(score_dialog.accept)
+        ok_button.setDefault(True)
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+        
+        score_dialog.setLayout(layout)
+        
+        if score_dialog.exec() == QDialog.DialogCode.Accepted:
+            score = score_spinner.value()
+            
+            # Store shot data
+            shot_id = self.data_storage.store_shot(self.session_id, metrics, score)
+            
+            if shot_id > 0:
+                # Track session stats
+                self.session_shots += 1
+                self.session_scores.append(score)
+                
+                # Get user's current baseline
+                baseline = self.data_storage.get_baseline(self.user_id)
+                current_best_score = baseline['subjective_score'] if baseline else 0
+                
+                # Update baseline if this is a better shot
+                if score > current_best_score:
+                    self.stability_metrics.update_baseline(updated_joint_history, score, current_best_score)
+                    self.data_storage.update_baseline(
+                        self.user_id, 
+                        self.stability_metrics.baseline_metrics, 
+                        score
+                    )
+                    QMessageBox.information(self, "New Baseline", 
+                                        "New baseline set with this shot!")
+                
+                # Show confirmation
+                QMessageBox.information(self, "Shot Recorded", 
+                                    f"Shot recorded with score: {score}\nFollow-through: {follow_through:.2f}")
+            else:
+                QMessageBox.critical(self, "Error", "Failed to store shot data.")
+        
+        # Clear the pending shot data
+        if hasattr(self, 'pending_shot_data'):
+            delattr(self, 'pending_shot_data')
