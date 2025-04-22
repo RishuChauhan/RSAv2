@@ -1648,14 +1648,21 @@ class LiveAnalysisWidget(QWidget):
         )
         print(f"Follow-through score: {follow_through:.3f}")
         
+        stability_score = self._calculate_overall_stability({
+        'sway_velocity': sway_velocities,
+        'dev_x': dev_x,
+        'dev_y': dev_y
+        })
+
         # Combine metrics
         metrics = {
-            'sway_velocity': sway_velocities,
-            'dev_x': dev_x,
-            'dev_y': dev_y,
-            'follow_through_score': follow_through,
-            'joint_positions': initial_positions,
-            'shot_time': shot_timestamp
+        'sway_velocity': sway_velocities,
+        'dev_x': dev_x,
+        'dev_y': dev_y,
+        'follow_through_score': follow_through,
+        'joint_positions': initial_positions,
+        'shot_time': shot_timestamp,
+        'overall_stability_score': stability_score  # Add this line
         }
         
         # Use a custom dialog for decimal score entry
