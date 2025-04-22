@@ -14,6 +14,8 @@ import time
 import math
 import os
 
+import json
+
 from typing import Dict, List, Optional, Tuple
 
 from src.joint_tracking import JointTracker
@@ -703,54 +705,81 @@ class LiveAnalysisWidget(QWidget):
         self.threshold_value.setText(f"{self.audio_threshold:.2f}")
     
     def toggle_analysis(self):
-        """Toggle the analysis (start/stop) with automatic recording."""
-        if not self.camera_running:
-            if not self.session_id:
-                QMessageBox.warning(self, "No Active Session", 
-                                "Please create a session first before starting analysis.")
-                return
-                
-            self.start_analysis()
-        else:
-            self.stop_analysis()
-    
+        """Toggle the analysis with improved error handling."""
+        try:
+            if not self.camera_running:
+                # Check for session more thoroughly
+                if not hasattr(self, 'session_id') or not self.session_id:
+                    QMessageBox.warning(self, "No Active Session", 
+                                    "Please create a session first before starting analysis.")
+                    return
+                    
+                try:
+                    self.start_analysis()
+                except Exception as e:
+                    print(f"Error starting analysis: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    QMessageBox.critical(self, "Error", f"Failed to start analysis: {str(e)}")
+            else:
+                try:
+                    self.stop_analysis()
+                except Exception as e:
+                    print(f"Error stopping analysis: {e}")
+                    QMessageBox.critical(self, "Error", f"Failed to stop analysis: {str(e)}")
+        except Exception as e:
+            print(f"Error in toggle_analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {str(e)}")
     
     def end_session(self):
-        """End the current session, stop recording, and show summary."""
-        if not self.session_active:
-            return
-        
-        # Set flag to prevent duplicate messages
-        self.ending_session = True
-        
-        # Stop analysis if running
-        if self.camera_running:
-            self.stop_analysis()
-        
-        # Stop and save recording if it was active
-        if self.record_enabled.isChecked() and hasattr(self, 'recording_metadata'):
-            self.stop_recording()
-        
-        # Reset recording toggle
-        self.record_enabled.setChecked(False)
-        
-        # Show session summary
-        self.show_session_summary()
-        
-        # Reset session data
-        self.session_active = False
-        self.session_shots = 0
-        self.session_scores = []
-        self.ending_session = False
-        
-        # Reset session in main window
-        main_window = self.window()
-        if hasattr(main_window, 'current_session'):
-            main_window.current_session = None
-            main_window.session_label.setText("No active session")
-        
-        if hasattr(main_window, 'session_button'):
-            main_window.session_button.setText("New Session")
+        """End the current session with improved error handling."""
+        try:
+            if not self.session_active:
+                return
+            
+            # Set flag to prevent duplicate messages
+            self.ending_session = True
+            
+            # Stop analysis if running
+            if self.camera_running:
+                self.stop_analysis()
+            
+            # Stop and save recording if active
+            if hasattr(self, 'record_enabled') and self.record_enabled.isChecked() and hasattr(self, 'recording_metadata'):
+                self.stop_recording()
+            
+            # Reset recording toggle
+            if hasattr(self, 'record_enabled'):
+                self.record_enabled.setChecked(False)
+            
+            # Show session summary
+            self.show_session_summary()
+            
+            # Reset session data
+            self.session_active = False
+            self.session_shots = 0
+            self.session_scores = []
+            self.ending_session = False
+            
+            # Update main window with proper error handling
+            try:
+                main_window = self.window()
+                if hasattr(main_window, 'current_session'):
+                    main_window.current_session = None
+                    main_window.session_label.setText("No active session")
+                
+                if hasattr(main_window, 'session_button'):
+                    main_window.session_button.setText("New Session")
+            except Exception as e:
+                print(f"Error updating main window: {e}")
+                
+        except Exception as e:
+            print(f"Error ending session: {e}")
+            # Reset essential states even if there was an error
+            self.session_active = False
+            self.ending_session = False
 
     def show_session_summary(self):
         """Show a summary popup with session statistics."""
@@ -1149,7 +1178,7 @@ class LiveAnalysisWidget(QWidget):
             self.stop_recording()
 
     def start_recording(self):
-        """Start recording the current session."""
+        """Start recording the current session with metrics data collection."""
         if not self.session_id:
             return
         
@@ -1184,7 +1213,7 @@ class LiveAnalysisWidget(QWidget):
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             self.video_writer = cv2.VideoWriter(self.video_path, fourcc, fps, (width, height))
             
-            # Create metadata
+            # Create metadata with properly initialized metrics array
             self.recording_metadata = {
                 'user_id': self.user_id,
                 'session_id': self.session_id,
@@ -1194,7 +1223,8 @@ class LiveAnalysisWidget(QWidget):
                 'width': width,
                 'height': height,
                 'fps': fps,
-                'metrics': [],
+                'metrics': [],  # Initialize empty array for metrics
+                'shots': [],    # Initialize empty array for shot markers
                 'duration': 0,
                 'paused_time': 0  # Track cumulative paused time
             }
@@ -1202,6 +1232,7 @@ class LiveAnalysisWidget(QWidget):
             # Initialize recording start time
             self.recording_start_time = time.time()
             self.recording_paused_time = 0  # For pause/resume tracking
+            self.current_frame_number = 0  # Track frame numbers for shot marking
         else:
             # Resuming after pause
             self.recording_paused_time += (time.time() - self.recording_pause_start)
@@ -1236,25 +1267,66 @@ class LiveAnalysisWidget(QWidget):
         self.is_recording = False
 
     def update_recording(self):
-        """Update recording with new frame."""
+        """Update recording with new frame and metrics data."""
         if not hasattr(self, 'is_recording') or not self.is_recording or not hasattr(self, 'video_writer'):
             return
         
-        # Get the current frame with overlays
-        frame = self.get_current_frame_with_overlays()
-        
-        if frame is not None:
-            # Write frame
-            self.video_writer.write(frame)
+        try:
+            # Get the current frame with overlays
+            frame = self.get_current_frame_with_overlays()
             
-            # Update duration
-            elapsed = time.time() - self.recording_start_time - self.recording_paused_time
-            self.recording_metadata['duration'] = elapsed
-            
-            # Update recording indicator
-            minutes = int(elapsed // 60)
-            seconds = int(elapsed % 60)
-            self.recording_indicator.setText(f"● REC {minutes:02d}:{seconds:02d}")
+            if frame is not None:
+                # Write frame
+                self.video_writer.write(frame)
+                
+                # Update duration
+                elapsed = time.time() - self.recording_start_time - self.recording_paused_time
+                self.recording_metadata['duration'] = elapsed
+                
+                # Update recording indicator
+                minutes = int(elapsed // 60)
+                seconds = int(elapsed % 60)
+                self.recording_indicator.setText(f"● REC {minutes:02d}:{seconds:02d}")
+                
+                # Capture current metrics data - NEW CODE
+                if hasattr(self, 'joint_tracker') and self.joint_tracker:
+                    joint_history = self.joint_tracker.get_joint_history()
+                    if joint_history:
+                        current_metrics = {}
+                        
+                        # Calculate stability metrics
+                        current_metrics['timestamp'] = elapsed  # Store time relative to recording start
+                        
+                        # Get latest joint positions
+                        if joint_history and 'joints' in joint_history[-1]:
+                            current_metrics['joint_positions'] = joint_history[-1]['joints']
+                        
+                        # Calculate sway velocity
+                        if hasattr(self, 'stability_metrics'):
+                            current_metrics['sway_velocity'] = self.stability_metrics.calculate_sway_velocity(joint_history)
+                            dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
+                            current_metrics['dev_x'] = dev_x
+                            current_metrics['dev_y'] = dev_y
+                            current_metrics['follow_through_score'] = self.stability_metrics.calculate_follow_through_score(
+                                joint_history, 
+                                shot_time=None,  # Not a shot frame
+                                post_window=1.0
+                            )
+                        
+                        # Add to metrics array
+                        self.recording_metadata['metrics'].append(current_metrics)
+                        
+                        # Limit metrics array size to prevent huge files
+                        # Keep approximately 5 frames per second for a minute-long recording
+                        max_metrics = 5 * 60  # 5 fps × 60 seconds
+                        if len(self.recording_metadata['metrics']) > max_metrics:
+                            # Keep first few and most recent entries
+                            keep_count = max_metrics // 2
+                            self.recording_metadata['metrics'] = \
+                                self.recording_metadata['metrics'][:keep_count] + \
+                                self.recording_metadata['metrics'][-keep_count:]
+        except Exception as e:
+            print(f"Error updating recording: {e}")
 
     def get_current_frame_with_overlays(self):
         """Get the current camera frame with all visualization overlays."""
@@ -1452,34 +1524,66 @@ class LiveAnalysisWidget(QWidget):
             self.stop_recording()
 
     def start_analysis(self):
-        """Start real-time analysis with automatic recording if enabled."""
-        # Reset shot detection and follow-through state
-        if hasattr(self, 'last_shot_time'):
-            delattr(self, 'last_shot_time')
-        self.joint_tracker.start()
-        
-        # Start audio detection
-        self.start_audio_detection()
-        
-        # Start update timer
-        self.update_timer.start(33)  # ~30 FPS
-        
-        # Update UI
-        self.start_stop_button.setText("Stop Analysis")
-        self.camera_running = True
-        self.session_active = True
-        
-        if self.session_id:
-            self.manual_shot_button.setEnabled(True)
-        
-        # Start recording if enabled
-        if self.record_enabled.isChecked():
-            self.start_recording()
-        
-        # Update main window button if accessible
-        main_window = self.window()
-        if hasattr(main_window, 'session_button'):
-            main_window.session_button.setText("End Session")
+        """Start real-time analysis with improved error handling."""
+        try:
+            # Double-check session before starting
+            if not hasattr(self, 'session_id') or not self.session_id:
+                QMessageBox.warning(self, "No Active Session", 
+                                "Please create a session first before starting analysis.")
+                return
+                
+            # Reset shot detection and follow-through state
+            if hasattr(self, 'last_shot_time'):
+                delattr(self, 'last_shot_time')
+                
+            # Initialize components with error handling
+            try:
+                self.joint_tracker.start()
+            except Exception as e:
+                print(f"Error starting joint tracker: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to start camera: {str(e)}")
+                return
+            
+            # Start audio detection
+            try:
+                self.start_audio_detection()
+            except Exception as e:
+                print(f"Error starting audio detection: {e}")
+                # Continue even if audio fails
+            
+            # Start update timer
+            self.update_timer.start(33)  # ~30 FPS
+            
+            # Update UI
+            self.start_stop_button.setText("Stop Analysis")
+            self.camera_running = True
+            self.session_active = True
+            
+            if self.session_id:
+                self.manual_shot_button.setEnabled(True)
+            
+            # Start recording if enabled
+            if hasattr(self, 'record_enabled') and self.record_enabled.isChecked():
+                try:
+                    self.start_recording()
+                except Exception as e:
+                    print(f"Error starting recording: {e}")
+                    # Continue even if recording fails
+            
+            # Update main window button if accessible
+            try:
+                main_window = self.window()
+                if hasattr(main_window, 'session_button'):
+                    main_window.session_button.setText("End Session")
+            except Exception as e:
+                print(f"Error updating main window: {e}")
+                
+        except Exception as e:
+            print(f"Error in start_analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            self.camera_running = False
+            QMessageBox.critical(self, "Error", f"Failed to start analysis: {str(e)}")
 
     def stop_analysis(self):
         """Stop real-time analysis and pause recording if active."""
@@ -1624,3 +1728,60 @@ class LiveAnalysisWidget(QWidget):
         # Clear the pending shot data
         if hasattr(self, 'pending_shot_data'):
             delattr(self, 'pending_shot_data')
+    
+    def _capture_current_metrics(self):
+        """Capture current frame metrics for recording with improved follow-through handling."""
+        if not hasattr(self, 'joint_tracker') or not self.joint_tracker:
+            return None
+            
+        joint_history = self.joint_tracker.get_joint_history()
+        if not joint_history:
+            return None
+            
+        current_metrics = {}
+        
+        # Calculate elapsed time
+        elapsed = time.time() - self.recording_start_time - self.recording_paused_time
+        current_metrics['timestamp'] = elapsed
+        
+        # Store current frame number if tracking it
+        if hasattr(self, 'current_frame_number'):
+            current_metrics['frame_number'] = self.current_frame_number
+        
+        # Get latest joint positions
+        if joint_history and 'joints' in joint_history[-1]:
+            current_metrics['joint_positions'] = joint_history[-1]['joints']
+        
+        # Calculate stability metrics
+        if hasattr(self, 'stability_metrics'):
+            try:
+                # Always calculate sway and deviation
+                current_metrics['sway_velocity'] = self.stability_metrics.calculate_sway_velocity(joint_history)
+                dev_x, dev_y = self.stability_metrics.calculate_postural_stability(joint_history)
+                current_metrics['dev_x'] = dev_x
+                current_metrics['dev_y'] = dev_y
+                
+                # Only calculate follow-through if we have a shot time
+                if hasattr(self, 'last_shot_time') and self.last_shot_time:
+                    time_since_shot = time.time() - self.last_shot_time
+                    # Only calculate follow-through if within 3 seconds after shot
+                    if time_since_shot < 3.0 and len(joint_history) >= 5:
+                        current_metrics['follow_through_score'] = self.stability_metrics.calculate_follow_through_score(
+                            joint_history, 
+                            shot_time=self.last_shot_time,
+                            post_window=1.0
+                        )
+                    else:
+                        current_metrics['follow_through_score'] = 0.0
+                else:
+                    # No shot detected yet, use a default value instead of calculating
+                    current_metrics['follow_through_score'] = 0.0
+            except Exception as e:
+                print(f"Error calculating metrics: {e}")
+                # Add basic empty structures to avoid errors during playback
+                current_metrics['sway_velocity'] = {}
+                current_metrics['dev_x'] = {}
+                current_metrics['dev_y'] = {}
+                current_metrics['follow_through_score'] = 0.0
+        
+        return current_metrics
