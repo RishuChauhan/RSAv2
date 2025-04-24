@@ -26,6 +26,15 @@ from datetime import datetime, timedelta
 import math
 import os
 
+import webbrowser
+import urllib.parse
+import tempfile
+from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from PyQt6.QtWidgets import QMenu, QDialog, QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
 from src.data_storage import DataStorage
 
 matplotlib.style.use('seaborn-v0_8-whitegrid')
@@ -890,7 +899,23 @@ class DashboardWidget(QWidget):
         export_button.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_DialogSaveButton))
         export_button.clicked.connect(self.export_to_csv)
         controls_layout.addWidget(export_button)
+
+         # NEW: Add share button with dropdown
+        from PyQt6.QtWidgets import QMenu
         
+        share_button = QPushButton("Share")
+        share_button.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_DirIcon))
+        
+        # Create dropdown menu
+        share_menu = QMenu()
+        pdf_action = share_menu.addAction("Download as PDF")
+        pdf_action.triggered.connect(self.download_as_pdf)
+        email_action = share_menu.addAction("Share via Email")
+        email_action.triggered.connect(self.share_via_email)
+        
+        share_button.setMenu(share_menu)
+        controls_layout.addWidget(share_button)
+
         controls_layout.addStretch()
         
         # Add filter options
@@ -2492,3 +2517,399 @@ class DashboardWidget(QWidget):
                 # Direct method as fallback
                 self.current_session = session_id
                 self.refresh_data()
+    
+    def download_as_pdf(self):
+        """Generate and download a PDF report of the current session data."""
+        if not self.current_session or not self.current_shots:
+            QMessageBox.warning(self, "No Data", "No session data available to export.")
+            return
+        
+        # Get save location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Performance Report", 
+            f"shooting_report_{datetime.now().strftime('%Y%m%d')}", 
+            "PDF Files (*.pdf)"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+        
+        try:
+            # Create PDF document
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib import colors
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+            from reportlab.lib.styles import getSampleStyleSheet
+            from io import BytesIO
+            
+            # Initialize PDF document
+            doc = SimpleDocTemplate(file_path, pagesize=letter)
+            styles = getSampleStyleSheet()
+            elements = []
+            
+            # Add title and session info
+            session_name = "Unknown Session"
+            if self.current_session:
+                self.cursor = self.data_storage.conn.cursor()
+                self.cursor.execute("SELECT name FROM sessions WHERE id = ?", (self.current_session,))
+                session = self.cursor.fetchone()
+                if session:
+                    session_name = session['name']
+            
+            title = Paragraph(f"Shooting Performance Report: {session_name}", styles['Heading1'])
+            elements.append(title)
+            elements.append(Spacer(1, 12))
+            
+            # Add date
+            date_text = Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal'])
+            elements.append(date_text)
+            elements.append(Spacer(1, 12))
+            
+            # Add overall performance metrics
+            elements.append(Paragraph("Overall Performance Metrics", styles['Heading2']))
+            elements.append(Spacer(1, 6))
+            
+            # Calculate statistics
+            if self.current_shots:
+                scores = [shot.get('subjective_score', 0) for shot in self.current_shots]
+                avg_score = sum(scores) / len(scores) if scores else 0
+                stability_values = [self._calculate_stability_score(shot.get('metrics', {})) for shot in self.current_shots]
+                avg_stability = sum(stability_values) / len(stability_values) if stability_values else 0
+                follow_values = [shot.get('metrics', {}).get('follow_through_score', 0) for shot in self.current_shots]
+                avg_follow = sum(follow_values) / len(follow_values) if follow_values else 0
+                
+                # Create metrics table
+                metrics_data = [
+                    ['Metric', 'Value', 'Rating'],
+                    ['Average Score', f"{avg_score:.1f}/10", self._get_rating(avg_score/10)],
+                    ['Average Stability', f"{avg_stability*100:.1f}%", self._get_rating(avg_stability)],
+                    ['Average Follow-through', f"{avg_follow:.2f}", self._get_rating(avg_follow)],
+                    ['Total Shots', str(len(self.current_shots)), '']
+                ]
+                
+                t = Table(metrics_data, colWidths=[150, 100, 100])
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                elements.append(t)
+                elements.append(Spacer(1, 12))
+            
+            # Add shot data table
+            elements.append(Paragraph("Shot Details", styles['Heading2']))
+            elements.append(Spacer(1, 6))
+            
+            # Extract table data
+            table_data = [['Shot #', 'Timestamp', 'Score', 'Follow-through', 'Stability', 'Sway']]
+            
+            for i, shot in enumerate(self.current_shots):
+                timestamp = shot['timestamp'].split('T')[1][:8] if 'timestamp' in shot else "Unknown"
+                score = shot.get('subjective_score', 0)
+                follow = shot.get('metrics', {}).get('follow_through_score', 0)
+                stability = self._calculate_stability_score(shot.get('metrics', {})) * 100
+                
+                # Calculate sway
+                sway_metrics = shot.get('metrics', {}).get('sway_velocity', {})
+                avg_sway = 0
+                if sway_metrics:
+                    sway_values = [sway_metrics.get(joint, 0) for joint in ['LEFT_WRIST', 'RIGHT_WRIST', 'LEFT_ELBOW', 'RIGHT_ELBOW']]
+                    avg_sway = sum(sway_values) / len(sway_values) if sway_values else 0
+                
+                table_data.append([str(i+1), timestamp, str(score), f"{follow:.2f}", f"{stability:.1f}%", f"{avg_sway:.2f} mm/s"])
+            
+            # Create table
+            t = Table(table_data)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 24))
+            
+            # Add graphs
+            elements.append(Paragraph("Performance Visualizations", styles['Heading2']))
+            elements.append(Spacer(1, 6))
+            
+            # Capture graphs as images
+            if hasattr(self, 'shot_sequence_widget'):
+                shot_seq_buffer = BytesIO()
+                self.shot_sequence_widget.figure.savefig(shot_seq_buffer, format='png', dpi=150)
+                shot_seq_buffer.seek(0)
+                shot_seq_img = Image(shot_seq_buffer, width=450, height=225)
+                elements.append(Paragraph("Shot Sequence Analysis", styles['Heading3']))
+                elements.append(shot_seq_img)
+                elements.append(Spacer(1, 12))
+            
+            if hasattr(self, 'score_stability_widget'):
+                score_stab_buffer = BytesIO()
+                self.score_stability_widget.figure.savefig(score_stab_buffer, format='png', dpi=150)
+                score_stab_buffer.seek(0)
+                score_stab_img = Image(score_stab_buffer, width=450, height=225)
+                elements.append(Paragraph("Score vs. Stability Analysis", styles['Heading3']))
+                elements.append(score_stab_img)
+                elements.append(Spacer(1, 12))
+            
+            if hasattr(self, 'stability_time_fig'):
+                stab_time_buffer = BytesIO()
+                self.stability_time_fig.savefig(stab_time_buffer, format='png', dpi=150)
+                stab_time_buffer.seek(0)
+                stab_time_img = Image(stab_time_buffer, width=450, height=225)
+                elements.append(Paragraph("Stability vs. Time Analysis", styles['Heading3']))
+                elements.append(stab_time_img)
+            
+            # Build the PDF
+            doc.build(elements)
+            
+            QMessageBox.information(self, "PDF Created", 
+                                f"Performance report saved to:\n{file_path}")
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "PDF Creation Error", 
+                           f"Failed to create PDF report: {str(e)}")
+            
+    def _get_rating(self, value):
+        """Convert a numeric value (0-1) to a text rating."""
+        if value >= 0.8:
+            return "Excellent"
+        elif value >= 0.6:
+            return "Good"
+        elif value >= 0.4:
+            return "Average"
+        else:
+            return "Needs Improvement"    
+    
+    def share_via_email(self):
+        """Share the performance report via email."""
+        if not self.current_session or not self.current_shots:
+            QMessageBox.warning(self, "No Data", "No session data available to share.")
+            return
+        
+        try:
+            # First create a temporary PDF
+            import tempfile
+            import os
+            temp_dir = tempfile.gettempdir()
+            temp_pdf = os.path.join(temp_dir, "temp_shooting_report.pdf")
+            
+            # Generate the PDF to the temp location
+            self._generate_pdf_report(temp_pdf)
+            
+            # Get email details from user
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QDialogButtonBox
+            
+            email_dialog = QDialog(self)
+            email_dialog.setWindowTitle("Share via Email")
+            email_dialog.setMinimumWidth(400)
+            
+            dialog_layout = QVBoxLayout()
+            
+            dialog_layout.addWidget(QLabel("Recipient Email:"))
+            recipient_input = QLineEdit()
+            dialog_layout.addWidget(recipient_input)
+            
+            dialog_layout.addWidget(QLabel("Subject:"))
+            subject_input = QLineEdit("Rifle Shooting Performance Report")
+            dialog_layout.addWidget(subject_input)
+            
+            dialog_layout.addWidget(QLabel("Message:"))
+            message_input = QLineEdit("Please find attached my rifle shooting performance report.")
+            dialog_layout.addWidget(message_input)
+            
+            # Add dialog buttons
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | 
+                                        QDialogButtonBox.StandardButton.Cancel)
+            button_box.accepted.connect(email_dialog.accept)
+            button_box.rejected.connect(email_dialog.reject)
+            dialog_layout.addWidget(button_box)
+            
+            email_dialog.setLayout(dialog_layout)
+            
+            if email_dialog.exec() == QDialog.DialogCode.Accepted:
+                recipient = recipient_input.text()
+                subject = subject_input.text()
+                message = message_input.text()
+                
+                # Open default email client with the report attached
+                self._send_email(recipient, subject, message, temp_pdf)
+                
+                # Success message
+                QMessageBox.information(self, "Email Prepared", 
+                    "Email has been prepared with the attached report.")
+                
+            # Clean up temp file
+            try:
+                os.remove(temp_pdf)
+            except:
+                pass
+                    
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Email Error", 
+                            f"Failed to share via email: {str(e)}")
+    
+    def _generate_pdf_report(self, file_path):
+        """Generate a PDF report at the specified path."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.styles import getSampleStyleSheet
+        from io import BytesIO
+        
+        # Initialize PDF document
+        doc = SimpleDocTemplate(file_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elements = []
+        
+        # Add title and session info
+        session_name = "Unknown Session"
+        if self.current_session:
+            self.cursor = self.data_storage.conn.cursor()
+            self.cursor.execute("SELECT name FROM sessions WHERE id = ?", (self.current_session,))
+            session = self.cursor.fetchone()
+            if session:
+                session_name = session['name']
+        
+        title = Paragraph(f"Shooting Performance Report: {session_name}", styles['Heading1'])
+        elements.append(title)
+        elements.append(Spacer(1, 12))
+        
+        # Add date
+        date_text = Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal'])
+        elements.append(date_text)
+        elements.append(Spacer(1, 12))
+        
+        # Add overall performance metrics
+        elements.append(Paragraph("Overall Performance Metrics", styles['Heading2']))
+        elements.append(Spacer(1, 6))
+        
+        # Calculate statistics
+        if self.current_shots:
+            scores = [shot.get('subjective_score', 0) for shot in self.current_shots]
+            avg_score = sum(scores) / len(scores) if scores else 0
+            stability_values = [self._calculate_stability_score(shot.get('metrics', {})) for shot in self.current_shots]
+            avg_stability = sum(stability_values) / len(stability_values) if stability_values else 0
+            follow_values = [shot.get('metrics', {}).get('follow_through_score', 0) for shot in self.current_shots]
+            avg_follow = sum(follow_values) / len(follow_values) if follow_values else 0
+            
+            # Create metrics table
+            metrics_data = [
+                ['Metric', 'Value', 'Rating'],
+                ['Average Score', f"{avg_score:.1f}/10", self._get_rating(avg_score/10)],
+                ['Average Stability', f"{avg_stability*100:.1f}%", self._get_rating(avg_stability)],
+                ['Average Follow-through', f"{avg_follow:.2f}", self._get_rating(avg_follow)],
+                ['Total Shots', str(len(self.current_shots)), '']
+            ]
+            
+            t = Table(metrics_data, colWidths=[150, 100, 100])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 12))
+        
+        # Add shot data table
+        elements.append(Paragraph("Shot Details", styles['Heading2']))
+        elements.append(Spacer(1, 6))
+        
+        # Extract table data
+        table_data = [['Shot #', 'Timestamp', 'Score', 'Follow-through', 'Stability', 'Sway']]
+        
+        for i, shot in enumerate(self.current_shots):
+            timestamp = shot['timestamp'].split('T')[1][:8] if 'timestamp' in shot else "Unknown"
+            score = shot.get('subjective_score', 0)
+            follow = shot.get('metrics', {}).get('follow_through_score', 0)
+            stability = self._calculate_stability_score(shot.get('metrics', {})) * 100
+            
+            # Calculate sway
+            sway_metrics = shot.get('metrics', {}).get('sway_velocity', {})
+            avg_sway = 0
+            if sway_metrics:
+                sway_values = [sway_metrics.get(joint, 0) for joint in ['LEFT_WRIST', 'RIGHT_WRIST', 'LEFT_ELBOW', 'RIGHT_ELBOW']]
+                avg_sway = sum(sway_values) / len(sway_values) if sway_values else 0
+            
+            table_data.append([str(i+1), timestamp, str(score), f"{follow:.2f}", f"{stability:.1f}%", f"{avg_sway:.2f} mm/s"])
+        
+        # Create table
+        t = Table(table_data)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 24))
+        
+        # Add graphs
+        elements.append(Paragraph("Performance Visualizations", styles['Heading2']))
+        elements.append(Spacer(1, 6))
+        
+        # Capture graphs as images
+        if hasattr(self, 'shot_sequence_widget'):
+            shot_seq_buffer = BytesIO()
+            self.shot_sequence_widget.figure.savefig(shot_seq_buffer, format='png', dpi=150)
+            shot_seq_buffer.seek(0)
+            shot_seq_img = Image(shot_seq_buffer, width=450, height=225)
+            elements.append(Paragraph("Shot Sequence Analysis", styles['Heading3']))
+            elements.append(shot_seq_img)
+            elements.append(Spacer(1, 12))
+        
+        if hasattr(self, 'score_stability_widget'):
+            score_stab_buffer = BytesIO()
+            self.score_stability_widget.figure.savefig(score_stab_buffer, format='png', dpi=150)
+            score_stab_buffer.seek(0)
+            score_stab_img = Image(score_stab_buffer, width=450, height=225)
+            elements.append(Paragraph("Score vs. Stability Analysis", styles['Heading3']))
+            elements.append(score_stab_img)
+            elements.append(Spacer(1, 12))
+        
+        if hasattr(self, 'stability_time_fig'):
+            stab_time_buffer = BytesIO()
+            self.stability_time_fig.savefig(stab_time_buffer, format='png', dpi=150)
+            stab_time_buffer.seek(0)
+            stab_time_img = Image(stab_time_buffer, width=450, height=225)
+            elements.append(Paragraph("Stability vs. Time Analysis", styles['Heading3']))
+            elements.append(stab_time_img)
+        
+        # Build the PDF
+        doc.build(elements)
+
+    def _send_email(self, recipient, subject, message, attachment_path):
+        """Open the default email client with the PDF attached."""
+        import webbrowser
+        import urllib.parse
+        
+        # Create a mailto URL
+        mailto_url = f"mailto:{recipient}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(message)}"
+        
+        # Open the default email client
+        webbrowser.open(mailto_url)
+        
+        # Note: This will only open the email client with recipient, subject, and body
+        # Automatically attaching files is not broadly supported through the mailto protocol
+        # For a real implementation, you would need to:
+        # 1. Use platform-specific email client APIs
+        # 2. Or use a library like smtplib to send directly 
+        # 3. Or show instructions to the user about manually attaching the file
+        
+        # Show instructions about attachment
+        QMessageBox.information(self, "Attach PDF", 
+                            f"Your email client has been opened.\n\nPlease manually attach the PDF from:\n{attachment_path}")
