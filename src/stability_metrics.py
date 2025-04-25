@@ -407,7 +407,7 @@ class StabilityMetrics:
         # Calculate all metrics
         sway_velocities = self.calculate_sway_velocity(joint_history)
         dev_x, dev_y = self.calculate_postural_stability(joint_history)
-        follow_through = self.calculate_follow_through_score(joint_history)
+        follow_through = self.calculate_follow_through_score(joint_history, shot_time=None)
         
         # Update baseline
         self.baseline_metrics['sway_velocity'] = sway_velocities

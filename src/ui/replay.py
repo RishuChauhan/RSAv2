@@ -3,8 +3,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QSlider, QListWidget, QListWidgetItem, QSplitter,
     QGroupBox, QGridLayout, QCheckBox, QProgressBar, QFrame,
     QDialog, QTextEdit, QDialogButtonBox, QFileDialog, QSpinBox,
-    QTableWidget, QTableWidgetItem, QHeaderView
-)
+    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize, QPointF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
 
@@ -735,6 +734,8 @@ class ReplayWidget(QWidget):
                 self.shot_frame_marked = False
                 self.shot_frame = 0
                 
+                self.update_shots_table(metadata)
+
                 # Clear annotations
                 self.video_frame.annotation_layer.clear_annotations()
                 
@@ -1532,64 +1533,57 @@ class ReplayWidget(QWidget):
         }
     
     def update_shots_table(self, metadata: Dict):
-        """
-        Update the shots history table with data from recording metadata.
+        """     
+        Update the shots history table with data from the shots database table.
         
         Args:
             metadata: Recording metadata dictionary
         """
         self.shots_table.setRowCount(0)  # Clear table
         
-        # Check if we have shots data
-        shots = metadata.get('shots', [])
-        metrics = metadata.get('metrics', [])
+        # Get session ID from the metadata
+        session_id = metadata.get('session_id')
+        if not session_id:
+            return  # No session ID, can't fetch shots
         
-        if not shots and metrics:
-            # No explicit shot markers, but we can use metrics with is_shot flag
-            shots = [m for m in metrics if m.get('is_shot', False)]
+        # Fetch shots data from the database - same data source as dashboard
+        shots = self.data_storage.get_shots(session_id)
+        if not shots:
+            return  # No shots found for this session
         
-        if not shots and metrics:
-            # Still no shots, use every 30th frame as a sample point
-            sample_interval = 30
-            shots = [m for i, m in enumerate(metrics) if i % sample_interval == 0]
-        
-        # If we have shots or metrics, populate the table
-        if shots:
-            for i, shot in enumerate(shots):
-                row_position = self.shots_table.rowCount()
-                self.shots_table.insertRow(row_position)
-                
-                # Time column
-                shot_time = shot.get('timestamp', 0)
-                minutes = int(shot_time // 60)
-                seconds = int(shot_time % 60)
-                time_str = f"{minutes}:{seconds:02d}"
-                self.shots_table.setItem(row_position, 0, QTableWidgetItem(time_str))
-                
-                # Shot number
-                self.shots_table.setItem(row_position, 1, QTableWidgetItem(str(i + 1)))
-                
-                # Find metrics for this shot
-                shot_metrics = shot
-                if 'timestamp' in shot and metrics:
-                    # Try to find matching metrics by timestamp
-                    shot_time = shot['timestamp']
-                    closest_metric = min(metrics, key=lambda m: abs(m.get('timestamp', 0) - shot_time))
-                    if abs(closest_metric.get('timestamp', 0) - shot_time) < 1.0:  # Within 1 second
-                        shot_metrics = closest_metric
-                
-                # Stability
-                stability = self._calculate_stability_score(shot_metrics)
-                stability_item = QTableWidgetItem(f"{stability:.1f}%")
-                self.shots_table.setItem(row_position, 2, stability_item)
-                
-                # Follow-through
-                follow_through = shot_metrics.get('follow_through_score', 0)
-                follow_item = QTableWidgetItem(f"{follow_through:.2f}")
-                self.shots_table.setItem(row_position, 3, follow_item)
-                
-                # Score (if available)
-                score = shot_metrics.get('shot_score', '-')
-                self.shots_table.setItem(row_position, 4, QTableWidgetItem(str(score)))
+        # Populate the table with shot data
+        for i, shot in enumerate(shots):
+            row_position = self.shots_table.rowCount()
+            self.shots_table.insertRow(row_position)
+            
+            # Time column (format timestamp from ISO format to HH:MM:SS)
+            try:
+                from datetime import datetime
+                shot_time = datetime.fromisoformat(shot['timestamp'])
+                time_str = shot_time.strftime("%H:%M:%S")
+            except (ValueError, TypeError):
+                # Fallback if timestamp can't be parsed
+                time_str = str(shot['timestamp']).split('T')[1][:8] if 'T' in str(shot['timestamp']) else str(shot['timestamp'])
+            self.shots_table.setItem(row_position, 0, QTableWidgetItem(time_str))
+            
+            # Shot number
+            self.shots_table.setItem(row_position, 1, QTableWidgetItem(str(i + 1)))
+            
+            # Get metrics data
+            metrics = shot.get('metrics', {})
+            
+            # Stability - use overall_stability_score directly if available
+            stability_score = metrics.get('overall_stability_score', 0) * 100
+            stability_item = QTableWidgetItem(f"{stability_score:.1f}%")
+            self.shots_table.setItem(row_position, 2, stability_item)
+            
+            # Follow-through - use directly from metrics
+            follow_through = metrics.get('follow_through_score', 0)
+            follow_item = QTableWidgetItem(f"{follow_through:.2f}")
+            self.shots_table.setItem(row_position, 3, follow_item)
+            
+            # Subjective score - directly from shot data
+            score = shot.get('subjective_score', '-')
+            self.shots_table.setItem(row_position, 4, QTableWidgetItem(str(score)))
     
     
