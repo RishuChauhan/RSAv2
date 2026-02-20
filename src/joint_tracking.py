@@ -45,11 +45,8 @@ class JointTracker:
 
         self.camera_index = camera_index
 
-        # Create video capture object
-        self.cap = cv2.VideoCapture(camera_index)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)  # Ensure minimum 30 FPS
+        # Video capture object will be initialized in start()
+        self.cap = None
         
         # Joint coordinate storage
         self.joint_data = {}
@@ -107,6 +104,9 @@ class JointTracker:
             - Dictionary of joint positions
             - Timestamp of the frame
         """
+        if self.cap is None or not self.cap.isOpened():
+            return None, {}, 0
+
         ret, frame = self.cap.read()
         if not ret:
             return None, {}, 0
@@ -259,11 +259,35 @@ class JointTracker:
                 spec.thickness
             )
 
-    def start(self):
-        """Start the tracking process."""
+    def start(self) -> bool:
+        """
+        Start the tracking process with robust camera initialization.
+
+        Returns:
+            True if camera started successfully, False otherwise
+        """
         # Initialize or reset the video capture if needed
         if self.cap is None or not self.cap.isOpened():
+            # Try requested camera index
             self.cap = cv2.VideoCapture(self.camera_index)
+
+            # Check if successful
+            if not self.cap.isOpened():
+                print(f"Failed to open camera index {self.camera_index}")
+
+                # If requested index wasn't 0, try 0 as fallback
+                if self.camera_index != 0:
+                    print("Attempting fallback to camera index 0...")
+                    self.cap = cv2.VideoCapture(0)
+                    if self.cap.isOpened():
+                        self.camera_index = 0
+                        print("Fallback to camera 0 successful")
+
+            # If still not opened, return False
+            if not self.cap.isOpened():
+                print("Failed to open any camera")
+                return False
+
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
@@ -272,6 +296,12 @@ class JointTracker:
         self.joint_data = {}
         self.joint_history = []
         self.joint_stability = {}
+
+        return True
+
+    def get_camera_index(self) -> int:
+        """Get the current active camera index."""
+        return self.camera_index
 
     def stop(self):
         """Stop the tracking process."""
