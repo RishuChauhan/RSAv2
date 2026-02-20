@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSplitter, QFrame, QProgressBar, QSlider, QSpinBox,
-    QGroupBox, QGridLayout, QComboBox, QMessageBox, QInputDialog
+    QGroupBox, QGridLayout, QComboBox, QMessageBox, QInputDialog,
+    QStackedWidget
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QImage, QPixmap
@@ -441,6 +442,35 @@ class LiveAnalysisWidget(QWidget):
         """)
         self.recording_indicator.setVisible(False)
         
+        # Shot processing progress bar
+        self.shot_progress = QProgressBar()
+        self.shot_progress.setRange(0, 100)
+        self.shot_progress.setTextVisible(False)
+        self.shot_progress.setFixedHeight(5)
+        self.shot_progress.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background-color: #E0E0E0;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #2196F3;
+                border-radius: 2px;
+            }
+        """)
+        self.shot_progress.setVisible(False)
+
+        # No Session Placeholder
+        self.no_session_label = QLabel("Create or select a session to begin live analysis")
+        self.no_session_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_session_label.setStyleSheet("""
+            font-size: 18px;
+            color: #78909C;
+            background-color: #ECEFF1;
+            border-radius: 8px;
+            padding: 20px;
+        """)
+
         # Add a professional-looking frame around the camera view
         camera_frame = QFrame()
         camera_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -476,6 +506,9 @@ class LiveAnalysisWidget(QWidget):
         # Add frame to camera layout
         camera_layout.addWidget(camera_frame)
         
+        # Add progress bar under camera frame
+        camera_layout.addWidget(self.shot_progress)
+
         # Add stability gauge under camera
         gauge_layout = QVBoxLayout()
         gauge_label = QLabel("Overall Stability")
@@ -672,9 +705,31 @@ class LiveAnalysisWidget(QWidget):
         # Set the initial sizes
         main_splitter.setSizes([600, 400])
         
-        main_layout.addWidget(main_splitter)
+        # Stacked layout for main content vs placeholder
+        self.content_stack = QStackedWidget()
+
+        # Page 0: Placeholder
+        placeholder_widget = QWidget()
+        placeholder_layout = QVBoxLayout()
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(self.no_session_label)
+        placeholder_layout.addStretch()
+        placeholder_widget.setLayout(placeholder_layout)
+        self.content_stack.addWidget(placeholder_widget)
+
+        # Page 1: Main content
+        content_widget = QWidget()
+        content_widget.setLayout(QVBoxLayout())
+        content_widget.layout().addWidget(main_splitter)
+        content_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self.content_stack.addWidget(content_widget)
+
+        main_layout.addWidget(self.content_stack)
         
         self.setLayout(main_layout)
+
+        # Show placeholder initially
+        self.content_stack.setCurrentIndex(0)
     
     def update_camera_index(self, index: int):
         """Update the selected camera index."""
@@ -706,6 +761,12 @@ class LiveAnalysisWidget(QWidget):
         """
         self.session_id = session_id
         
+        if not session_id:
+            self.session_label.setText("No active session")
+            self.manual_shot_button.setEnabled(False)
+            self.content_stack.setCurrentIndex(0)  # Show placeholder
+            return
+
         # Get session details
         self.cursor = self.data_storage.conn.cursor()
         self.cursor.execute("SELECT name FROM sessions WHERE id = ?", (session_id,))
@@ -714,9 +775,11 @@ class LiveAnalysisWidget(QWidget):
         if session:
             self.session_label.setText(f"Active Session: {session['name']}")
             self.manual_shot_button.setEnabled(True)
+            self.content_stack.setCurrentIndex(1)  # Show content
         else:
             self.session_label.setText("No active session")
             self.manual_shot_button.setEnabled(False)
+            self.content_stack.setCurrentIndex(0)  # Show placeholder
     
     def setup_audio_detection(self):
         """Set up audio detection for shot triggering."""
@@ -1058,12 +1121,32 @@ class LiveAnalysisWidget(QWidget):
         # Show feedback to the user about follow-through collection
         self.feedback_label.setText("Shot detected! Collecting follow-through data...")
         
-        # Wait to collect post-shot frames (1.5 seconds should be enough to get frames for the 1.0s window)
+        # Show processing feedback
+        self.manual_shot_button.setEnabled(False)
+        self.manual_shot_button.setText("Recording Shot...")
+        self.manual_shot_button.setStyleSheet("""
+            background-color: #FF9800;
+            color: white;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 8px;
+        """)
+
+        # Start progress bar animation
+        self.shot_progress.setVisible(True)
+        self.shot_progress.setValue(0)
+        self.shot_progress_timer = QTimer()
+        self.shot_progress_timer.timeout.connect(self._update_shot_progress)
+        self.shot_progress_timer.start(50)  # Update every 50ms
+        self.shot_progress_value = 0
+
+        # Wait to collect post-shot frames (1.5 seconds)
         QTimer.singleShot(1500, self.complete_shot_processing)
         
-        # Change the button state to indicate waiting
-        self.manual_shot_button.setEnabled(False)
-        self.manual_shot_button.setText("Processing...")
+    def _update_shot_progress(self):
+        """Update shot processing progress bar."""
+        self.shot_progress_value += 3.33  # ~100% in 1.5s
+        self.shot_progress.setValue(int(self.shot_progress_value))
     
     def manual_shot_detection(self):
         """Manually trigger shot detection."""
@@ -1632,9 +1715,10 @@ class LiveAnalysisWidget(QWidget):
 
     def complete_shot_processing(self):
         """Complete shot processing after collecting post-shot frames for follow-through analysis."""
-        # Restore button state
-        self.manual_shot_button.setEnabled(True)
-        self.manual_shot_button.setText("Record Shot")
+        # Stop progress animation
+        if hasattr(self, 'shot_progress_timer'):
+            self.shot_progress_timer.stop()
+        self.shot_progress.setVisible(False)
         
         # Retrieve the pending shot data
         if not hasattr(self, 'pending_shot_data'):
@@ -1679,6 +1763,43 @@ class LiveAnalysisWidget(QWidget):
         'dev_y': dev_y
         })
 
+        # Flash feedback area
+        original_style = self.feedback_label.styleSheet()
+        original_text = self.feedback_label.text()
+
+        if follow_through > 0.7:
+            flash_color = "#4CAF50" # Green
+            msg = "Great Follow-through!"
+        elif follow_through > 0.4:
+            flash_color = "#FF9800" # Orange
+            msg = "Good Follow-through"
+        else:
+            flash_color = "#F44336" # Red
+            msg = "Improve Follow-through"
+
+        self.feedback_label.setStyleSheet(f"""
+            font-size: 18px;
+            font-weight: bold;
+            background-color: {flash_color};
+            color: white;
+            border-radius: 5px;
+            padding: 10px;
+        """)
+        self.feedback_label.setText(f"{msg}\nScore: {follow_through:.2f}")
+
+        # Restore normal UI after brief flash
+        def restore_ui():
+            self.feedback_label.setStyleSheet(original_style)
+            # Restore button state
+            self.manual_shot_button.setEnabled(True)
+            self.manual_shot_button.setText("Record Shot")
+            self.manual_shot_button.setStyleSheet("")
+
+            # Show dialog
+            self._show_score_dialog(metrics, follow_through)
+
+        QTimer.singleShot(1000, restore_ui)
+
         # Combine metrics
         metrics = {
         'sway_velocity': sway_velocities,
@@ -1687,9 +1808,11 @@ class LiveAnalysisWidget(QWidget):
         'follow_through_score': follow_through,
         'joint_positions': initial_positions,
         'shot_time': shot_timestamp,
-        'overall_stability_score': stability_score  # Add this line
+        'overall_stability_score': stability_score
         }
-        
+
+    def _show_score_dialog(self, metrics, follow_through):
+        """Show the score entry dialog."""
         # Use a custom dialog for decimal score entry
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDoubleSpinBox
         

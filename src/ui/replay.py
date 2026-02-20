@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QSlider, QListWidget, QListWidgetItem, QSplitter,
     QGroupBox, QGridLayout, QCheckBox, QProgressBar, QFrame,
     QDialog, QTextEdit, QDialogButtonBox, QFileDialog, QSpinBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox)
+    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QStackedWidget)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize, QPointF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
 
@@ -491,9 +491,40 @@ class ReplayWidget(QWidget):
         # Set initial sizes
         main_splitter.setSizes([200, 650, 300])
         
-        main_layout.addWidget(main_splitter)
+        # Create stacked widget for content vs placeholder
+        self.content_stack = QStackedWidget()
+
+        # Placeholder
+        placeholder_widget = QWidget()
+        placeholder_layout = QVBoxLayout()
+        placeholder_label = QLabel("Select a session to view recordings")
+        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_label.setStyleSheet("""
+            font-size: 18px;
+            color: #78909C;
+            background-color: #ECEFF1;
+            border-radius: 8px;
+            padding: 20px;
+        """)
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(placeholder_label)
+        placeholder_layout.addStretch()
+        placeholder_widget.setLayout(placeholder_layout)
+        self.content_stack.addWidget(placeholder_widget)
+
+        # Main content
+        content_widget = QWidget()
+        content_widget.setLayout(QVBoxLayout())
+        content_widget.layout().addWidget(main_splitter)
+        content_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self.content_stack.addWidget(content_widget)
+
+        main_layout.addWidget(self.content_stack)
         
         self.setLayout(main_layout)
+
+        # Show placeholder initially
+        self.content_stack.setCurrentIndex(0)
     
     def set_user(self, user_id: int):
         """
@@ -565,6 +596,7 @@ class ReplayWidget(QWidget):
         if index <= 0:  # "Select a session..." item
             self.session_id = None
             self.recordings_list.clear()
+            self.content_stack.setCurrentIndex(0)  # Show placeholder
             return
         
         # Get session ID from combobox data
@@ -572,6 +604,7 @@ class ReplayWidget(QWidget):
         
         if session_id > 0:
             self.session_id = session_id
+            self.content_stack.setCurrentIndex(1)  # Show content
             self.load_recordings()
     
     def load_recordings(self):

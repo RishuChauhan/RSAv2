@@ -10,7 +10,10 @@ from PyQt6.QtGui import QFont, QBrush, QColor, QPainter, QPen, QPixmap
 
 import json  # This was missing and causing errors
 import matplotlib
-matplotlib.use('Qt5Agg')
+try:
+    matplotlib.use('Qt5Agg')
+except ImportError:
+    pass
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -883,9 +886,36 @@ class DashboardWidget(QWidget):
         self.create_graphs_tab()
         self.create_advanced_analytics_tab()
         
-        main_layout.addWidget(self.dashboard_tabs)
+        # Create stacked widget for content vs placeholder
+        self.content_stack = QStackedWidget()
+
+        # Placeholder
+        placeholder_widget = QWidget()
+        placeholder_layout = QVBoxLayout()
+        placeholder_label = QLabel("Select a session to view dashboard analytics")
+        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_label.setStyleSheet("""
+            font-size: 18px;
+            color: #78909C;
+            background-color: #ECEFF1;
+            border-radius: 8px;
+            padding: 20px;
+        """)
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(placeholder_label)
+        placeholder_layout.addStretch()
+        placeholder_widget.setLayout(placeholder_layout)
+        self.content_stack.addWidget(placeholder_widget)
+
+        # Main content
+        self.content_stack.addWidget(self.dashboard_tabs)
+
+        main_layout.addWidget(self.content_stack)
         
         self.setLayout(main_layout)
+
+        # Show placeholder initially
+        self.content_stack.setCurrentIndex(0)
 
     def create_data_table_tab(self):
         """Create the data table tab with export functionality."""
@@ -2256,6 +2286,7 @@ class DashboardWidget(QWidget):
             self.current_session = None
             self.session_stats_label.setText("No session selected")
             self.clear_data()
+            self.content_stack.setCurrentIndex(0)  # Show placeholder
             return
         
         try:
@@ -2264,6 +2295,7 @@ class DashboardWidget(QWidget):
             
             if session_id > 0:
                 self.current_session = session_id
+                self.content_stack.setCurrentIndex(1)  # Show content
                 self.refresh_data()
                 
                 # Also update the comparison session selector

@@ -329,6 +329,11 @@ class MainWindow(QMainWindow):
         self.settings_widget = SettingsWidget(self.data_storage)
         self.tab_widget.addTab(self.settings_widget, self.style().standardIcon(self.style().StandardPixmap.SP_FileDialogDetailedView), "Settings")
         
+        # Disable analysis-dependent tabs initially
+        self.tab_widget.setTabEnabled(1, False)  # Live Analysis
+        self.tab_widget.setTabEnabled(2, False)  # 3D Visualization
+        self.tab_widget.setTabEnabled(3, False)  # Session Playback
+
         layout.addWidget(self.tab_widget)
         
         # Create a professional status bar
@@ -648,12 +653,18 @@ class MainWindow(QMainWindow):
                     'name': last_session['name']
                 }
                 self.session_label.setText(f"Active Session: {last_session['name']}")
+                self.session_button.setText("End Session")
                 
                 # Update all views with the last session
                 self.dashboard_widget.set_session(last_session['id'])
                 self.live_analysis_widget.set_session(last_session['id'])
                 self.visualization_widget.set_session(last_session['id'])
                 self.replay_widget.set_session(last_session['id'])
+
+                # Enable tabs
+                self.tab_widget.setTabEnabled(1, True)
+                self.tab_widget.setTabEnabled(2, True)
+                self.tab_widget.setTabEnabled(3, True)
             
             # Show a welcome message
             QMessageBox.information(self, "Welcome", f"Welcome {user['name']}!\n\nYou are now logged into the Rifle Shooting Analysis professional system.")
@@ -775,13 +786,22 @@ class MainWindow(QMainWindow):
                     self.replay_widget.set_user(self.current_user['id'])  # Refresh sessions
                     self.replay_widget.set_session(session_id)
                     
+                    # Enable tabs
+                    self.tab_widget.setTabEnabled(1, True)
+                    self.tab_widget.setTabEnabled(2, True)
+                    self.tab_widget.setTabEnabled(3, True)
+
                     # Switch to live analysis tab and automatically start analysis
                     self.tab_widget.setCurrentIndex(1)  # Switch to Live Analysis tab
-                    QTimer.singleShot(500, self.live_analysis_widget.start_analysis)  # Start analysis after a short delay
                     
-                    # Show success message
-                    QMessageBox.information(self, "Session Created", 
-                                        f"Session '{name}' created successfully.\n\nLive analysis will start automatically.")
+                    # Start analysis immediately without delay hack
+                    # Ensure event loop processes the tab switch first
+                    from PyQt6.QtWidgets import QApplication
+                    QApplication.processEvents()
+                    self.live_analysis_widget.start_analysis()
+
+                    # Update status bar instead of blocking popup
+                    self.statusBar().showMessage(f"Session '{name}' created. Live analysis started.")
                 else:
                     self.statusBar().showMessage("Failed to create session")
                     QMessageBox.critical(self, "Error", "Failed to create session.")
@@ -813,6 +833,14 @@ class MainWindow(QMainWindow):
         self.session_label.setText("No active session")
         self.session_button.setText("New Session")
         
+        # Disable analysis tabs
+        self.tab_widget.setTabEnabled(1, False)  # Live Analysis
+        self.tab_widget.setTabEnabled(2, False)  # 3D Visualization
+        self.tab_widget.setTabEnabled(3, False)  # Session Playback
+
+        # Switch to dashboard
+        self.tab_widget.setCurrentIndex(0)
+
         # Update status
         self.statusBar().showMessage("Session ended")
 

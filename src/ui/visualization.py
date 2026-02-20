@@ -2,7 +2,8 @@ from __future__ import print_function
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QListWidget, QListWidgetItem, QSplitter,
-    QGroupBox, QGridLayout, QCheckBox, QSizePolicy, QSlider
+    QGroupBox, QGridLayout, QCheckBox, QSizePolicy, QSlider,
+    QStackedWidget
 )
 from PyQt6.QtCore import Qt, QSize
 
@@ -227,9 +228,40 @@ class VisualizationWidget(QWidget):
         # Set the initial sizes
         main_splitter.setSizes([200, 600, 200])
         
-        main_layout.addWidget(main_splitter)
+        # Create stacked widget for content vs placeholder
+        self.content_stack = QStackedWidget()
+
+        # Placeholder
+        placeholder_widget = QWidget()
+        placeholder_layout = QVBoxLayout()
+        placeholder_label = QLabel("Select a session to visualize 3D data")
+        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_label.setStyleSheet("""
+            font-size: 18px;
+            color: #78909C;
+            background-color: #ECEFF1;
+            border-radius: 8px;
+            padding: 20px;
+        """)
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(placeholder_label)
+        placeholder_layout.addStretch()
+        placeholder_widget.setLayout(placeholder_layout)
+        self.content_stack.addWidget(placeholder_widget)
+
+        # Main content
+        content_widget = QWidget()
+        content_widget.setLayout(QVBoxLayout())
+        content_widget.layout().addWidget(main_splitter)
+        content_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self.content_stack.addWidget(content_widget)
+
+        main_layout.addWidget(self.content_stack)
         
         self.setLayout(main_layout)
+
+        # Show placeholder initially
+        self.content_stack.setCurrentIndex(0)
     
     def debug_print(self, message):
         """Print debug messages to console."""
@@ -403,6 +435,7 @@ class VisualizationWidget(QWidget):
             self.session_id = None
             self.shots_list.clear()
             self.setup_3d_plot()  # Reset plot
+            self.content_stack.setCurrentIndex(0)  # Show placeholder
             return
         
         # Get session ID from combobox data
@@ -410,6 +443,7 @@ class VisualizationWidget(QWidget):
         
         if session_id > 0:
             self.session_id = session_id
+            self.content_stack.setCurrentIndex(1)  # Show content
             self.load_session_shots()
     
     def load_session_shots(self):
