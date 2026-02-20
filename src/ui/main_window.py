@@ -210,7 +210,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(info_label)
         
         # Add version info
-        version_label = QLabel("v1.0.0")
+        version_label = QLabel("v2.6.2")
         version_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         version_label.setStyleSheet("color: #9E9E9E; margin: 10px;")
         layout.addWidget(version_label)
