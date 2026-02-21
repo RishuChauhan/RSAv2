@@ -4,8 +4,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QScrollArea, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPainter, QColor, QPen, QLinearGradient, QFont, QBrush
-
+from PyQt6.QtGui import QPainter, QColor, QPen, QLinearGradient, QFont, QBrush,  QImage, QPixmap
 import cv2
 import numpy as np
 import pyaudio
