@@ -14,6 +14,8 @@ import struct
 import time
 import math
 import os
+import logging
+import traceback
 
 import json
 
@@ -23,7 +25,15 @@ from src.joint_tracking import JointTracker
 from src.stability_metrics import StabilityMetrics
 from src.fuzzy_feedback import FuzzyFeedback
 from src.data_storage import DataStorage
+from src.constants import (
+    SWAY_LOW_THRESHOLD, SWAY_HIGH_THRESHOLD,
+    DEV_LOW_THRESHOLD, DEV_HIGH_THRESHOLD,
+    FOLLOW_THROUGH_POOR, FOLLOW_THROUGH_GOOD,
+    FUZZY_SWAY_MAX, FUZZY_DEV_MAX, POST_SHOT_WAIT_MS
+)
 from PyQt6.QtCore import QThread, pyqtSignal
+
+logger = logging.getLogger(__name__)
 
 class AnalysisWorker(QThread):
     """
@@ -102,8 +112,7 @@ class AnalysisWorker(QThread):
                 self.msleep(1)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.error("Error in AnalysisWorker", exc_info=True)
             self.error_occurred.emit(str(e))
         finally:
             if self.joint_tracker:
@@ -161,7 +170,11 @@ class StabilityGauge(QProgressBar):
         self.setMinimumHeight(30)
         
         # Apply color styling for professional look
-        self.setStyleSheet("""
+        self.setStyleSheet(self._get_style("gradient"))
+
+    def _get_style(self, variant: str) -> str:
+        """Get the stylesheet for the gauge based on variant."""
+        base_style = """
             QProgressBar {
                 border: 1px solid #CFD8DC;
                 border-radius: 5px;
@@ -171,19 +184,31 @@ class StabilityGauge(QProgressBar):
                 font-size: 14px;
                 padding: 1px;
             }
-            
             QProgressBar::chunk {
-                background-color: qlineargradient(
+                background-color: %s;
+                border-radius: 5px;
+            }
+        """
+
+        if variant == "gradient":
+            color = """qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
                     stop:0 #E53935,
                     stop:0.4 #FFB300,
                     stop:0.6 #FFB300,
                     stop:1 #43A047
-                );
-                border-radius: 5px;
-            }
-        """)
-    
+                )"""
+        elif variant == "red":
+            color = "#E53935"
+        elif variant == "yellow":
+            color = "#FFB300"
+        elif variant == "green":
+            color = "#43A047"
+        else:
+            color = "#2196F3"
+
+        return base_style % color
+
     def update_stability(self, stability_score: float):
         """
         Update the stability gauge with a new score using an improved calculation.
@@ -211,47 +236,11 @@ class StabilityGauge(QProgressBar):
         
         # Update color based on value ranges
         if percentage < 30:
-            self.setStyleSheet("""
-                QProgressBar {
-                    border: 1px solid #CFD8DC;
-                    border-radius: 5px;
-                    text-align: center;
-                    font-weight: bold;
-                    color: white;
-                }
-                QProgressBar::chunk {
-                    background-color: #E53935;
-                    border-radius: 5px;
-                }
-            """)
+            self.setStyleSheet(self._get_style("red"))
         elif percentage < 70:
-            self.setStyleSheet("""
-                QProgressBar {
-                    border: 1px solid #CFD8DC;
-                    border-radius: 5px;
-                    text-align: center;
-                    font-weight: bold;
-                    color: white;
-                }
-                QProgressBar::chunk {
-                    background-color: #FFB300;
-                    border-radius: 5px;
-                }
-            """)
+            self.setStyleSheet(self._get_style("yellow"))
         else:
-            self.setStyleSheet("""
-                QProgressBar {
-                    border: 1px solid #CFD8DC;
-                    border-radius: 5px;
-                    text-align: center;
-                    font-weight: bold;
-                    color: white;
-                }
-                QProgressBar::chunk {
-                    background-color: #43A047;
-                    border-radius: 5px;
-                }
-            """)
+            self.setStyleSheet(self._get_style("green"))
 
 
 class LiveAnalysisWidget(QWidget):
@@ -768,9 +757,10 @@ class LiveAnalysisWidget(QWidget):
             return
 
         # Get session details
-        self.cursor = self.data_storage.conn.cursor()
-        self.cursor.execute("SELECT name FROM sessions WHERE id = ?", (session_id,))
-        session = self.cursor.fetchone()
+        import contextlib
+        with contextlib.closing(self.data_storage.conn.cursor()) as cursor:
+            cursor.execute("SELECT name FROM sessions WHERE id = ?", (session_id,))
+            session = cursor.fetchone()
         
         if session:
             self.session_label.setText(f"Active Session: {session['name']}")
@@ -860,7 +850,7 @@ class LiveAnalysisWidget(QWidget):
                 QTimer.singleShot(1000, lambda: self.audio_timer.start(50))
         
         except Exception as e:
-            print(f"Audio processing error: {str(e)}")
+            logger.error(f"Audio processing error: {str(e)}")
     
     def update_audio_threshold(self, value: int):
         """
@@ -885,20 +875,16 @@ class LiveAnalysisWidget(QWidget):
                 try:
                     self.start_analysis()
                 except Exception as e:
-                    print(f"Error starting analysis: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.error(f"Error starting analysis: {e}", exc_info=True)
                     QMessageBox.critical(self, "Error", f"Failed to start analysis: {str(e)}")
             else:
                 try:
                     self.stop_analysis()
                 except Exception as e:
-                    print(f"Error stopping analysis: {e}")
+                    logger.error(f"Error stopping analysis: {e}")
                     QMessageBox.critical(self, "Error", f"Failed to stop analysis: {str(e)}")
         except Exception as e:
-            print(f"Error in toggle_analysis: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error in toggle_analysis: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"An unexpected error occurred: {str(e)}")
     
     def end_session(self):
@@ -941,10 +927,10 @@ class LiveAnalysisWidget(QWidget):
                 if hasattr(main_window, 'session_button'):
                     main_window.session_button.setText("New Session")
             except Exception as e:
-                print(f"Error updating main window: {e}")
+                logger.error(f"Error updating main window: {e}", exc_info=True)
                 
         except Exception as e:
-            print(f"Error ending session: {e}")
+            logger.error(f"Error ending session: {e}", exc_info=True)
             # Reset essential states even if there was an error
             self.session_active = False
             self.ending_session = False
@@ -998,7 +984,7 @@ class LiveAnalysisWidget(QWidget):
             msg_box.exec()
             
         except Exception as e:
-            print(f"Error showing session summary: {e}")
+            logger.error(f"Error showing session summary: {e}", exc_info=True)
 
     def update_analysis(self):
         """Update real-time analysis and UI elements."""
@@ -1090,13 +1076,13 @@ class LiveAnalysisWidget(QWidget):
         shot_timestamp = latest_frame['timestamp']
         self.last_shot_time = shot_timestamp
         
-        print(f"Shot detected at time: {shot_timestamp}")
-        print(f"Joint history length: {len(joint_history)}")
+        logger.info(f"Shot detected at time: {shot_timestamp}")
+        logger.debug(f"Joint history length: {len(joint_history)}")
         
         if len(joint_history) > 0:
             first_ts = joint_history[0].get('timestamp', 0)
             last_ts = joint_history[-1].get('timestamp', 0)
-            print(f"History time range: {first_ts:.3f} to {last_ts:.3f} (span: {last_ts - first_ts:.3f}s)")
+            logger.debug(f"History time range: {first_ts:.3f} to {last_ts:.3f} (span: {last_ts - first_ts:.3f}s)")
         
         # Calculate metrics for the shot
         sway_velocities = self.stability_metrics.calculate_sway_velocity(joint_history)
@@ -1106,7 +1092,7 @@ class LiveAnalysisWidget(QWidget):
         current_joint_positions = {}
         if 'joints' in latest_frame:
             current_joint_positions = latest_frame['joints']
-            print(f"Captured positions for joints: {list(current_joint_positions.keys())}")
+            logger.debug(f"Captured positions for joints: {list(current_joint_positions.keys())}")
         
         # Store metrics and information needed for delayed processing
         self.pending_shot_data = {
@@ -1223,7 +1209,7 @@ class LiveAnalysisWidget(QWidget):
                 self._write_frame_to_video(frame, metrics, stability_score)
 
         except Exception as e:
-            print(f"Error updating UI: {e}")
+            logger.error(f"Error updating UI: {e}", exc_info=True)
 
     def _write_frame_to_video(self, frame, metrics, stability_score):
         """Write frame and metrics to video file."""
@@ -1265,7 +1251,7 @@ class LiveAnalysisWidget(QWidget):
             # But earlier code limited it.
 
         except Exception as e:
-            print(f"Error writing to video: {e}")
+            logger.error(f"Error writing to video: {e}", exc_info=True)
         
     def _calculate_overall_stability(self, metrics: Dict) -> float:
         """
@@ -1296,9 +1282,9 @@ class LiveAnalysisWidget(QWidget):
         
         # Normalize metrics to 0-1 scale (lower is better for sway and deviation)
         # These thresholds are based on typical shooting stability metrics
-        norm_sway = max(0, 1 - (avg_sway / 20.0))
-        norm_dev_x = max(0, 1 - (avg_dev_x / 30.0))
-        norm_dev_y = max(0, 1 - (avg_dev_y / 30.0))
+        norm_sway = max(0, 1 - (avg_sway / FUZZY_SWAY_MAX))
+        norm_dev_x = max(0, 1 - (avg_dev_x / FUZZY_DEV_MAX))
+        norm_dev_y = max(0, 1 - (avg_dev_y / FUZZY_DEV_MAX))
         
         # Weighted combination of factors - rebalanced without follow-through
         # Sway is most important for shooting stability
@@ -1327,9 +1313,9 @@ class LiveAnalysisWidget(QWidget):
                 sway_label.setText(f"{sway:.2f}")
                 
                 # Color code based on value (green for good, yellow for moderate, red for high sway)
-                if sway < 5.0:  # Low sway (good)
+                if sway < SWAY_LOW_THRESHOLD:  # Low sway (good)
                     sway_label.setStyleSheet("color: #43A047; font-weight: bold;")
-                elif sway < 10.0:  # Medium sway
+                elif sway < SWAY_HIGH_THRESHOLD:  # Medium sway
                     sway_label.setStyleSheet("color: #FFB300; font-weight: bold;")
                 else:  # High sway (bad)
                     sway_label.setStyleSheet("color: #E53935; font-weight: bold;")
@@ -1341,9 +1327,9 @@ class LiveAnalysisWidget(QWidget):
                 dev_x_label.setText(f"{dev_x:.2f}")
                 
                 # Color code
-                if dev_x < 10.0:
+                if dev_x < DEV_LOW_THRESHOLD:
                     dev_x_label.setStyleSheet("color: #43A047;")
-                elif dev_x < 20.0:
+                elif dev_x < DEV_HIGH_THRESHOLD:
                     dev_x_label.setStyleSheet("color: #FFB300;")
                 else:
                     dev_x_label.setStyleSheet("color: #E53935;")
@@ -1355,9 +1341,9 @@ class LiveAnalysisWidget(QWidget):
                 dev_y_label.setText(f"{dev_y:.2f}")
                 
                 # Color code
-                if dev_y < 10.0:
+                if dev_y < DEV_LOW_THRESHOLD:
                     dev_y_label.setStyleSheet("color: #43A047;")
-                elif dev_y < 20.0:
+                elif dev_y < DEV_HIGH_THRESHOLD:
                     dev_y_label.setStyleSheet("color: #FFB300;")
                 else:
                     dev_y_label.setStyleSheet("color: #E53935;")
@@ -1368,9 +1354,9 @@ class LiveAnalysisWidget(QWidget):
             self.follow_through_label.setText(f"{follow_through:.2f}")
             
             # Color code based on value (red to green)
-            if follow_through < 0.4:
+            if follow_through < FOLLOW_THROUGH_POOR:
                 self.follow_through_label.setStyleSheet("color: #E53935; font-weight: bold;")
-            elif follow_through < 0.7:
+            elif follow_through < FOLLOW_THROUGH_GOOD:
                 self.follow_through_label.setStyleSheet("color: #FFB300; font-weight: bold;")
             else:
                 self.follow_through_label.setStyleSheet("color: #43A047; font-weight: bold;")
@@ -1538,10 +1524,11 @@ class LiveAnalysisWidget(QWidget):
                 size = 40
             
             # Color based on stability
-            if sway < 5.0:  # Stable - green
+            if sway < SWAY_LOW_THRESHOLD:  # Stable - green
                 color = (0, 255, 0)
-            elif sway < 10.0:  # Medium - yellow/orange
-                g = int(255 * (10.0 - sway) / 5.0)
+            elif sway < SWAY_HIGH_THRESHOLD:  # Medium - yellow/orange
+                range_width = SWAY_HIGH_THRESHOLD - SWAY_LOW_THRESHOLD
+                g = int(255 * (SWAY_HIGH_THRESHOLD - sway) / range_width)
                 color = (0, g, 255)
             else:  # Unstable - red
                 color = (0, 0, 255)
@@ -1642,7 +1629,7 @@ class LiveAnalysisWidget(QWidget):
             try:
                 self.start_audio_detection()
             except Exception as e:
-                print(f"Error starting audio detection: {e}")
+                logger.error(f"Error starting audio detection: {e}", exc_info=True)
                 # Continue even if audio fails
             
             # Update UI
@@ -1666,12 +1653,10 @@ class LiveAnalysisWidget(QWidget):
                 if hasattr(main_window, 'session_button'):
                     main_window.session_button.setText("End Session")
             except Exception as e:
-                print(f"Error updating main window: {e}")
+                logger.error(f"Error updating main window: {e}", exc_info=True)
                 
         except Exception as e:
-            print(f"Error in start_analysis: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error in start_analysis: {e}", exc_info=True)
             self.camera_running = False
             QMessageBox.critical(self, "Error", f"Failed to start analysis: {str(e)}")
 
@@ -1711,7 +1696,7 @@ class LiveAnalysisWidget(QWidget):
             try:
                 self.start_recording()
             except Exception as e:
-                print(f"Error starting recording: {e}")
+                logger.error(f"Error starting recording: {e}", exc_info=True)
 
     def complete_shot_processing(self):
         """Complete shot processing after collecting post-shot frames for follow-through analysis."""
@@ -1722,7 +1707,7 @@ class LiveAnalysisWidget(QWidget):
         
         # Retrieve the pending shot data
         if not hasattr(self, 'pending_shot_data'):
-            print("Error: No pending shot data found")
+            logger.warning("No pending shot data found during completion")
             return
         
         # Get stored data
@@ -1737,25 +1722,25 @@ class LiveAnalysisWidget(QWidget):
         
         initial_history_length = len(self.pending_shot_data['initial_joint_history'])
         updated_history_length = len(updated_joint_history)
-        print(f"Original history length: {initial_history_length}")
-        print(f"Updated history length: {updated_history_length}")
-        print(f"New frames collected: {updated_history_length - initial_history_length}")
+        logger.debug(f"Original history length: {initial_history_length}")
+        logger.debug(f"Updated history length: {updated_history_length}")
+        logger.debug(f"New frames collected: {updated_history_length - initial_history_length}")
         
         # Debug timestamps
         if updated_history_length > 0:
             first_ts = updated_joint_history[0].get('timestamp', 0)
             last_ts = updated_joint_history[-1].get('timestamp', 0)
-            print(f"Updated history range: {first_ts:.3f} to {last_ts:.3f} (span: {last_ts - first_ts:.3f}s)")
-            print(f"Post-shot time available: {last_ts - shot_timestamp:.3f}s")
+            logger.debug(f"Updated history range: {first_ts:.3f} to {last_ts:.3f} (span: {last_ts - first_ts:.3f}s)")
+            logger.debug(f"Post-shot time available: {last_ts - shot_timestamp:.3f}s")
         
         # Calculate follow-through using the updated joint history
-        print(f"Calculating follow-through with shot_time={shot_timestamp}")
+        logger.info(f"Calculating follow-through with shot_time={shot_timestamp}")
         follow_through = self.stability_metrics.calculate_follow_through_score(
             updated_joint_history,
             shot_time=shot_timestamp,
             post_window=1.0
         )
-        print(f"Follow-through score: {follow_through:.3f}")
+        logger.info(f"Follow-through score: {follow_through:.3f}")
         
         stability_score = self._calculate_overall_stability({
         'sway_velocity': sway_velocities,
@@ -1767,10 +1752,10 @@ class LiveAnalysisWidget(QWidget):
         original_style = self.feedback_label.styleSheet()
         original_text = self.feedback_label.text()
 
-        if follow_through > 0.7:
+        if follow_through > FOLLOW_THROUGH_GOOD:
             flash_color = "#4CAF50" # Green
             msg = "Great Follow-through!"
-        elif follow_through > 0.4:
+        elif follow_through > FOLLOW_THROUGH_POOR:
             flash_color = "#FF9800" # Orange
             msg = "Good Follow-through"
         else:

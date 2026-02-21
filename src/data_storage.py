@@ -5,6 +5,9 @@ import time
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 import contextlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DataStorage:
     """
@@ -37,7 +40,7 @@ class DataStorage:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row  # Access rows by column name
         except sqlite3.Error as e:
-            print(f"Database connection error: {e}")
+            logger.error(f"Database connection error: {e}")
             # Create a fallback in-memory database if file connection fails
             self.conn = sqlite3.connect(':memory:', check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
@@ -209,7 +212,7 @@ class DataStorage:
                 sessions = cursor.fetchall()
                 return [dict(session) for session in sessions] if sessions else []
         except sqlite3.Error as e:
-            print(f"Error fetching sessions: {e}")
+            logger.error(f"Error fetching sessions: {e}")
             return []
     
     def store_shot(self, session_id: int, metrics: Dict, subjective_score: int) -> int:
@@ -276,7 +279,7 @@ class DataStorage:
 
                 return shot_list
         except sqlite3.Error as e:
-            print(f"Error fetching shots: {e}")
+            logger.error(f"Error fetching shots: {e}")
             return []
     
     def get_shot(self, shot_id: int) -> Optional[Dict]:
@@ -409,7 +412,7 @@ class DataStorage:
                     'shot_count': len(shots)
                 }
         except Exception as e:
-            print(f"Error getting session stats: {e}")
+            logger.error(f"Error getting session stats: {e}")
             return {
                 'avg_subjective_score': 0,
                 'max_subjective_score': 0,

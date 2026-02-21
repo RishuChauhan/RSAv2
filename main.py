@@ -25,9 +25,10 @@ def setup_logging():
     
     log_file = os.path.join(log_dir, 'rifle_shot_analysis.log')
     
+    # Configure root logger
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
         handlers=[
             logging.FileHandler(log_file),
             logging.StreamHandler()

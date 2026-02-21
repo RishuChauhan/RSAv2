@@ -3,7 +3,12 @@ import mediapipe as mp
 import numpy as np
 import math 
 import time
+import logging
 from typing import Dict, List, Tuple, Optional
+
+from src.constants import SWAY_LOW_THRESHOLD, SWAY_HIGH_THRESHOLD
+
+logger = logging.getLogger(__name__)
 
 class JointTracker:
     """
@@ -273,19 +278,19 @@ class JointTracker:
 
             # Check if successful
             if not self.cap.isOpened():
-                print(f"Failed to open camera index {self.camera_index}")
+                logger.warning(f"Failed to open camera index {self.camera_index}")
 
                 # If requested index wasn't 0, try 0 as fallback
                 if self.camera_index != 0:
-                    print("Attempting fallback to camera index 0...")
+                    logger.info("Attempting fallback to camera index 0...")
                     self.cap = cv2.VideoCapture(0)
                     if self.cap.isOpened():
                         self.camera_index = 0
-                        print("Fallback to camera 0 successful")
+                        logger.info("Fallback to camera 0 successful")
 
             # If still not opened, return False
             if not self.cap.isOpened():
-                print("Failed to open any camera")
+                logger.error("Failed to open any camera")
                 return False
 
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)

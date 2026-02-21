@@ -11,12 +11,14 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D
-import traceback
 import sys
 import numpy as np
 from typing import Dict, List, Optional
+import logging
 
 from src.data_storage import DataStorage
+
+logger = logging.getLogger(__name__)
 
 class VisualizationWidget(QWidget):
     """
@@ -265,8 +267,7 @@ class VisualizationWidget(QWidget):
     
     def debug_print(self, message):
         """Print debug messages to console."""
-        print(f"DEBUG [Visualization]: {message}", file=sys.stderr)
-        sys.stderr.flush()
+        logger.debug(f"[Visualization]: {message}")
 
     def setup_3d_plot(self):
         """Set up the initial 3D plot with professional styling."""
@@ -325,7 +326,7 @@ class VisualizationWidget(QWidget):
                 self.figure.tight_layout()
                 self.canvas.draw()
         except Exception as e:
-            print(f"Error drawing canvas: {e}")
+            logger.error(f"Error drawing canvas: {e}")
 
     def rotate_skeleton(self, angle_degrees):
         """
@@ -583,7 +584,7 @@ class VisualizationWidget(QWidget):
             joint_positions = {}
             if 'joint_positions' in shot['metrics'] and shot['metrics']['joint_positions']:
                 joint_positions = shot['metrics']['joint_positions']
-                print(f"Using stored joint positions for shot {shot['id']}")
+                logger.debug(f"Using stored joint positions for shot {shot['id']}")
             else:
                 # Try to get it from other metrics if available
                 if 'sway_velocity' in shot['metrics']:
@@ -620,10 +621,10 @@ class VisualizationWidget(QWidget):
                             joint_positions[joint]['y'] += random.uniform(-20, 20) * offset_factor
                             joint_positions[joint]['z'] += random.uniform(-10, 10) * offset_factor
                     
-                    print(f"Generated positions for shot {shot['id']}")
+                    logger.debug(f"Generated positions for shot {shot['id']}")
                 else:
                     # No position data available
-                    print(f"No position data available for shot {shot['id']}")
+                    logger.warning(f"No position data available for shot {shot['id']}")
                     continue
 
             # In the update_visualization function, modify this part:
@@ -688,9 +689,7 @@ class VisualizationWidget(QWidget):
                         # Format with just one decimal place to save space
                         coordinate_html += f"<tr><td>{joint}:</td><td>{x:.1f}</td><td>{y:.1f}</td><td>{z:.1f}</td></tr>"
             except Exception as e:
-                print(f"Error plotting shot {shot['id']}: {e}")
-                import traceback
-                print(traceback.format_exc())
+                logger.error(f"Error plotting shot {shot['id']}: {e}", exc_info=True)
         
         # Close the HTML table
         coordinate_html += "</table>"
@@ -809,7 +808,7 @@ class VisualizationWidget(QWidget):
                 pos = pos[0]
 
             if not all(key in pos for key in ['x', 'y', 'z']):
-                print(f"Missing coordinate data for joint {joint_name}: {pos}")
+                logger.warning(f"Missing coordinate data for joint {joint_name}: {pos}")
                 continue
 
             # Apply scaling to Z after rotation
@@ -905,7 +904,7 @@ class VisualizationWidget(QWidget):
                 
                 self.ax.set_box_aspect([1.0, 1.0, 1.0])
             except Exception as e:
-                print(f"Error setting axis limits: {e}")
+                logger.error(f"Error setting axis limits: {e}")
 
     def compare_shots(self):
         """Compare multiple selected shots in the 3D visualization."""
@@ -982,8 +981,7 @@ class VisualizationWidget(QWidget):
                     self.figure.tight_layout()
                 self.canvas.draw_idle()  # Using draw_idle() is safer than draw()
         except Exception as e:
-            print(f"Error in safe_draw: {e}")
-            traceback.print_exc()
+            logger.error(f"Error in safe_draw: {e}", exc_info=True)
 
     def closeEvent(self, event):
         """Handle the widget close event by cleaning up matplotlib resources."""
@@ -997,7 +995,7 @@ class VisualizationWidget(QWidget):
     def _ensure_canvas_valid(self):
         """Check if canvas is valid, recreate if needed."""
         if not hasattr(self, 'canvas') or self.canvas is None or not hasattr(self, 'figure') or self.figure is None:
-            print("Canvas or figure not found, recreating")
+            logger.warning("Canvas or figure not found, recreating")
             
             # Recreate figure and canvas
             self.figure = Figure(figsize=(10, 8), dpi=100)

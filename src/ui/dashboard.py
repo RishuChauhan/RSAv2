@@ -38,7 +38,11 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
 from PyQt6.QtWidgets import QMenu, QDialog, QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
+import logging
+
 from src.data_storage import DataStorage
+
+logger = logging.getLogger(__name__)
 
 matplotlib.style.use('seaborn-v0_8-whitegrid')
 matplotlib.rcParams.update({
@@ -128,7 +132,7 @@ class PerformanceWidget(QWidget):
                                 color=color)
                 
             except Exception as e:
-                print(f"Error calculating trend: {e}")
+                logger.error(f"Error calculating trend: {e}")
         
         # Add grid with better styling
         ax.grid(True, linestyle='--', alpha=0.7, color='#CFD8DC')
@@ -2174,7 +2178,7 @@ class DashboardWidget(QWidget):
                         continue
             except Exception as e:
                 # Handle database query errors
-                print(f"Error fetching metrics: {e}")
+                logger.error(f"Error fetching metrics: {e}")
             
             avg_follow_through = sum(follow_through_values) / len(follow_through_values) if follow_through_values else 0
             
@@ -2215,9 +2219,7 @@ class DashboardWidget(QWidget):
                 self.follow_through_quality_label.setStyleSheet(f"color: {quality_color}; font-size: 18px; font-weight: bold;")
                 
         except Exception as e:
-            print(f"Error updating analytics cards: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error updating analytics cards: {e}", exc_info=True)
 
     def on_date_filter_changed(self, state):
         """Handle date filter checkbox state changes."""
@@ -2323,9 +2325,7 @@ class DashboardWidget(QWidget):
                     else:
                         self.compare_session.setCurrentIndex(0)  # Default to "All Sessions"
         except Exception as e:
-            print(f"Error in session change: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error in session change: {e}", exc_info=True)
             self.session_stats_label.setText("Error loading session")
             self.clear_data()
 
@@ -2359,9 +2359,7 @@ class DashboardWidget(QWidget):
             self.update_analytics()
             
         except Exception as e:
-            import traceback
-            print(f"Error refreshing dashboard data: {e}")
-            print(traceback.format_exc())
+            logger.error(f"Error refreshing dashboard data: {e}", exc_info=True)
             self.session_stats_label.setText("Error loading data")
 
     def clear_data(self):
@@ -2506,7 +2504,7 @@ class DashboardWidget(QWidget):
                 self.session_selector.addItem(session_text, session['id'])
                 
         except Exception as e:
-            print(f"Error refreshing sessions: {e}")
+            logger.error(f"Error refreshing sessions: {e}")
             # Ensure placeholder is added even if error occurs
             if self.session_selector.count() == 0:
                 self.session_selector.addItem("Select a session...", -1)
@@ -2545,7 +2543,7 @@ class DashboardWidget(QWidget):
                     self.current_session = session_id
                     self.refresh_data()
             except Exception as e:
-                print(f"Error setting session in dashboard: {e}")
+                logger.error(f"Error setting session in dashboard: {e}")
                 # Direct method as fallback
                 self.current_session = session_id
                 self.refresh_data()
@@ -2704,8 +2702,7 @@ class DashboardWidget(QWidget):
                                 f"Performance report saved to:\n{file_path}")
             
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Failed to create PDF report: {e}", exc_info=True)
             QMessageBox.critical(self, "PDF Creation Error", 
                            f"Failed to create PDF report: {str(e)}")
             
@@ -2785,8 +2782,7 @@ class DashboardWidget(QWidget):
                 pass
                     
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Failed to share via email: {e}", exc_info=True)
             QMessageBox.critical(self, "Email Error", 
                             f"Failed to share via email: {str(e)}")
     
