@@ -2,6 +2,11 @@ import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 from typing import Dict, List, Optional
+import logging
+
+from src.constants import FUZZY_SWAY_MAX, FUZZY_DEV_MAX, FOLLOW_THROUGH_POOR, FOLLOW_THROUGH_GOOD
+
+logger = logging.getLogger(__name__)
 
 class FuzzyFeedback:
     """
@@ -262,9 +267,9 @@ class FuzzyFeedback:
         # Priority-based feedback system (professionals care about the most important issues first)
         
         # Check follow-through (high priority for professionals)
-        if follow_through < 0.35:  # Poor follow-through
+        if follow_through < FOLLOW_THROUGH_POOR:  # Poor follow-through
             feedback_items.append(f"Focus on follow-through: maintain position after trigger break.")
-        elif follow_through > 0.7 and wrist_sway < 6 and nose_sway < 3:  # Excellent follow-through
+        elif follow_through > FOLLOW_THROUGH_GOOD and wrist_sway < 6 and nose_sway < 3:  # Excellent follow-through
             feedback_items.append(np.random.choice(self.feedback_templates['follow_through']))
         
         # Check head position (high priority)
@@ -284,7 +289,7 @@ class FuzzyFeedback:
             feedback_items.append(np.random.choice(self.feedback_templates['stance']))
         
         # If performance is excellent across the board, provide positive reinforcement
-        if (follow_through > 0.7 and wrist_sway < 4 and elbow_sway < 4 and 
+        if (follow_through > FOLLOW_THROUGH_GOOD and wrist_sway < 4 and elbow_sway < 4 and
             nose_sway < 3 and hip_dev_x < 5 and nose_dev_y < 4):
             feedback_items = ["Excellent shot execution. Maintain this stability and follow-through."]
         

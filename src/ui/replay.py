@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QSlider, QListWidget, QListWidgetItem, QSplitter,
     QGroupBox, QGridLayout, QCheckBox, QProgressBar, QFrame,
     QDialog, QTextEdit, QDialogButtonBox, QFileDialog, QSpinBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox)
+    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QStackedWidget)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize, QPointF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
 
@@ -17,8 +17,11 @@ import json
 import os
 import math
 import datetime
+import logging
 
 from src.data_storage import DataStorage
+
+logger = logging.getLogger(__name__)
 
 class AnnotationLayer(QWidget):
     """Widget for adding annotations to video frames."""
@@ -180,7 +183,7 @@ class VideoFrameWidget(QWidget):
             self.annotation_layer.setGeometry(self.video_label.geometry())
             
         except Exception as e:
-            print(f"Error updating frame: {e}")
+            logger.error(f"Error updating frame: {e}")
             self.video_label.setText(f"Error displaying frame: {str(e)}")
     
     def clear(self):
@@ -491,9 +494,40 @@ class ReplayWidget(QWidget):
         # Set initial sizes
         main_splitter.setSizes([200, 650, 300])
         
-        main_layout.addWidget(main_splitter)
+        # Create stacked widget for content vs placeholder
+        self.content_stack = QStackedWidget()
+
+        # Placeholder
+        placeholder_widget = QWidget()
+        placeholder_layout = QVBoxLayout()
+        placeholder_label = QLabel("Select a session to view recordings")
+        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_label.setStyleSheet("""
+            font-size: 18px;
+            color: #78909C;
+            background-color: #ECEFF1;
+            border-radius: 8px;
+            padding: 20px;
+        """)
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(placeholder_label)
+        placeholder_layout.addStretch()
+        placeholder_widget.setLayout(placeholder_layout)
+        self.content_stack.addWidget(placeholder_widget)
+
+        # Main content
+        content_widget = QWidget()
+        content_widget.setLayout(QVBoxLayout())
+        content_widget.layout().addWidget(main_splitter)
+        content_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self.content_stack.addWidget(content_widget)
+
+        main_layout.addWidget(self.content_stack)
         
         self.setLayout(main_layout)
+
+        # Show placeholder initially
+        self.content_stack.setCurrentIndex(0)
     
     def set_user(self, user_id: int):
         """
@@ -533,7 +567,7 @@ class ReplayWidget(QWidget):
                 self.session_selector.addItem(session_text, session['id'])
                 
         except Exception as e:
-            print(f"Error refreshing sessions: {e}")
+            logger.error(f"Error refreshing sessions: {e}")
     
     def set_session(self, session_id: int):
         """
@@ -565,6 +599,7 @@ class ReplayWidget(QWidget):
         if index <= 0:  # "Select a session..." item
             self.session_id = None
             self.recordings_list.clear()
+            self.content_stack.setCurrentIndex(0)  # Show placeholder
             return
         
         # Get session ID from combobox data
@@ -572,6 +607,7 @@ class ReplayWidget(QWidget):
         
         if session_id > 0:
             self.session_id = session_id
+            self.content_stack.setCurrentIndex(1)  # Show content
             self.load_recordings()
     
     def load_recordings(self):
@@ -630,7 +666,7 @@ class ReplayWidget(QWidget):
                         recording_count += 1
                         
                     except Exception as e:
-                        print(f"Error loading recording metadata: {str(e)}")
+                        logger.error(f"Error loading recording metadata: {str(e)}")
             
             # Update status if no recordings found
             if recording_count == 0:
@@ -642,9 +678,7 @@ class ReplayWidget(QWidget):
                 self.recordings_list.addItem(no_rec_item)
                 
         except Exception as e:
-            print(f"Error loading recordings: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error loading recordings: {e}", exc_info=True)
     
     def on_recording_selected(self):
         """Handle recording selection change with enhanced error handling."""
@@ -661,7 +695,7 @@ class ReplayWidget(QWidget):
             self.current_recording = metadata
             
             # Debug output
-            print(f"Selected recording: {metadata.get('session_name')}, {metadata.get('timestamp')}")
+            logger.debug(f"Selected recording: {metadata.get('session_name')}, {metadata.get('timestamp')}")
             
             # Ensure user_recordings_dir is set and exists
             if not hasattr(self, 'user_recordings_dir') or not self.user_recordings_dir:
@@ -690,7 +724,7 @@ class ReplayWidget(QWidget):
                 if not self.playback_cap.isOpened():
                     self.video_frame.clear()
                     self.video_frame.video_label.setText("Could not open video")
-                    print(f"Failed to open video: {video_path}")
+                    logger.error(f"Failed to open video: {video_path}")
                     self.disable_playback_controls()
                     return
                     
@@ -702,7 +736,7 @@ class ReplayWidget(QWidget):
                 self.total_frames = int(self.playback_cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 self.playback_duration = self.total_frames / self.frame_rate
                 
-                print(f"Video loaded: {self.frame_rate} FPS, {self.total_frames} frames, {self.playback_duration:.2f}s duration")
+                logger.info(f"Video loaded: {self.frame_rate} FPS, {self.total_frames} frames, {self.playback_duration:.2f}s duration")
                 
                 # Update timeline slider
                 self.timeline_slider.setMaximum(max(1, self.total_frames - 1))
@@ -723,7 +757,7 @@ class ReplayWidget(QWidget):
                 else:
                     self.video_frame.clear()
                     self.video_frame.video_label.setText("Could not read first frame")
-                    print("Failed to read first frame")
+                    logger.error("Failed to read first frame")
                     self.disable_playback_controls()
                     return
                 
@@ -749,14 +783,10 @@ class ReplayWidget(QWidget):
                 self.disable_playback_controls()
                 self.video_frame.clear()
                 self.video_frame.video_label.setText(f"Error opening video: {str(e)}")
-                print(f"Error in video playback: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Error in video playback: {e}", exc_info=True)
                 
         except Exception as e:
-            print(f"Error in recording selection: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error in recording selection: {e}", exc_info=True)
             self.disable_playback_controls()
             self.video_frame.clear()
     
@@ -820,7 +850,7 @@ class ReplayWidget(QWidget):
             self.playback_timer.start(interval)
             
         except Exception as e:
-            print(f"Error starting playback: {e}")
+            logger.error(f"Error starting playback: {e}")
             self.is_playing = False
             self.play_button.setText("▶")
     
@@ -908,7 +938,7 @@ class ReplayWidget(QWidget):
             # Update notes display if available
             self.update_notes_display()
         else:
-            print(f"Error reading frame at position {prev_frame}")
+            logger.warning(f"Error reading frame at position {prev_frame}")
     
     def update_playback(self):
         """Update video playback with next frame and enhanced error handling."""
@@ -957,7 +987,7 @@ class ReplayWidget(QWidget):
             self.update_notes_display()
             
         except Exception as e:
-            print(f"Error updating playback: {e}")
+            logger.error(f"Error updating playback: {e}")
             self.pause_playback()
     
     def seek_playback(self, position: int):
@@ -997,10 +1027,10 @@ class ReplayWidget(QWidget):
                 # Set position back by 1 so next read gets the correct frame
                 self.playback_cap.set(cv2.CAP_PROP_POS_FRAMES, position)
             else:
-                print(f"Error reading frame at position {position}")
+                logger.error(f"Error reading frame at position {position}")
                 
         except Exception as e:
-            print(f"Error seeking to position {position}: {e}")
+            logger.error(f"Error seeking to position {position}: {e}")
     
     def update_time_display(self):
         """Update the time display based on current frame position."""
@@ -1378,7 +1408,7 @@ class ReplayWidget(QWidget):
                 )
                 
             except Exception as e:
-                print(f"Error saving evaluation: {e}")
+                logger.error(f"Error saving evaluation: {e}")
                 QMessageBox.critical(
                     self, "Error", 
                     f"Failed to save evaluation: {str(e)}"
@@ -1472,7 +1502,7 @@ class ReplayWidget(QWidget):
             )
             
         except Exception as e:
-            print(f"Error deleting recording: {e}")
+            logger.error(f"Error deleting recording: {e}")
             QMessageBox.critical(
                 self, "Error", 
                 f"Failed to delete recording: {str(e)}"

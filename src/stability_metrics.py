@@ -1,6 +1,11 @@
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 import math
+import logging
+
+from src.constants import SWAY_LOW_THRESHOLD, SWAY_HIGH_THRESHOLD, FOLLOW_THROUGH_POOR, FOLLOW_THROUGH_GOOD
+
+logger = logging.getLogger(__name__)
 
 class StabilityMetrics:
     """
@@ -8,6 +13,20 @@ class StabilityMetrics:
     Implements sway velocity, postural stability, and follow-through scores.
     """
     
+    # Define standard joint names to ensure consistent output
+    STANDARD_JOINTS = [
+        'LEFT_SHOULDER', 'RIGHT_SHOULDER',
+        'LEFT_ELBOW', 'RIGHT_ELBOW',
+        'LEFT_WRIST', 'RIGHT_WRIST',
+        'NOSE',
+        'LEFT_HIP', 'RIGHT_HIP',
+        'LEFT_ANKLE', 'RIGHT_ANKLE'
+    ]
+
+    AGGREGATED_JOINTS = [
+        'SHOULDERS', 'ELBOWS', 'WRISTS', 'HIPS', 'ANKLES'
+    ]
+
     def __init__(self):
         """Initialize the stability metrics calculator."""
         self.baseline_metrics = {}
@@ -29,6 +48,12 @@ class StabilityMetrics:
         # Follow-through score parameters (λ)
         self.lambda_sway = 0.5
         self.lambda_dev = 0.5
+
+    def _get_empty_metrics(self) -> Dict[str, float]:
+        """Return a dictionary with all standard and aggregated joints set to 0.0."""
+        metrics = {joint: 0.0 for joint in self.STANDARD_JOINTS}
+        metrics.update({joint: 0.0 for joint in self.AGGREGATED_JOINTS})
+        return metrics
     
     def calculate_sway_velocity(self, joint_history: List[Dict]) -> Dict[str, float]:
         """
@@ -38,10 +63,13 @@ class StabilityMetrics:
             joint_history: List of joint data dictionaries with timestamps
                 
         Returns:
-            Dictionary of sway velocities for each joint
+            Dictionary of sway velocities for each joint. Returns safe defaults if data is insufficient.
         """
-        if len(joint_history) < 2:
-            return {}
+        # Initialize with safe defaults
+        sway_velocities = self._get_empty_metrics()
+
+        if not joint_history or len(joint_history) < 2:
+            return sway_velocities
         
         # Slice to 1.0 second window before the shot
         sliced_history = self._slice_window(joint_history, 1.0)
@@ -53,14 +81,12 @@ class StabilityMetrics:
         # Sort by timestamp to ensure correct calculation
         sorted_history = sorted(sliced_history, key=lambda x: x['timestamp'])
         
-        # Initialize result dictionary
-        sway_velocities = {}
-        
-        # Get all unique joint names from the first entry
+        # Get all unique joint names from the first entry if available
         if not sorted_history or 'joints' not in sorted_history[0]:
-            return {}
+            return sway_velocities
             
-        joint_names = sorted_history[0]['joints'].keys()
+        # We only care about standard joints
+        joint_names = [j for j in sorted_history[0]['joints'].keys() if j in self.STANDARD_JOINTS]
         
         # Calculate velocities for each joint
         for joint_name in joint_names:
@@ -98,8 +124,6 @@ class StabilityMetrics:
             if velocities:
                 avg_velocity = sum(velocities) / len(velocities)
                 sway_velocities[joint_name] = avg_velocity
-            else:
-                sway_velocities[joint_name] = 0.0
         
         # Add aggregated joint group velocities that match UI expectations
         sway_velocities['SHOULDERS'] = (sway_velocities.get('LEFT_SHOULDER', 0) + 
@@ -127,10 +151,19 @@ class StabilityMetrics:
             joint_history: List of joint data dictionaries with timestamps
                 
         Returns:
-            Tuple of dictionaries (DevX, DevY) for each joint and body part group
+            Tuple of dictionaries (DevX, DevY) for each joint and body part group.
+            Returns safe defaults if data is insufficient.
         """
+        # Initialize with safe defaults
+        dev_x = self._get_empty_metrics()
+        dev_y = self._get_empty_metrics()
+
+        # Initialize UPPER_BODY explicitly
+        dev_x['UPPER_BODY'] = 0.0
+        dev_y['UPPER_BODY'] = 0.0
+
         if not joint_history:
-            return {}, {}
+            return dev_x, dev_y
         
         # Slice to 0.6 second window before the shot
         sliced_history = self._slice_window(joint_history, 0.6)
@@ -139,15 +172,11 @@ class StabilityMetrics:
         if len(sliced_history) < 2:
             sliced_history = joint_history
                 
-        # Initialize result dictionaries
-        dev_x = {}
-        dev_y = {}
-        
         # Get all unique joint names from the first entry
-        if 'joints' not in sliced_history[0]:
-            return {}, {}
+        if not sliced_history or 'joints' not in sliced_history[0]:
+            return dev_x, dev_y
                 
-        joint_names = sliced_history[0]['joints'].keys()
+        joint_names = [j for j in sliced_history[0]['joints'].keys() if j in self.STANDARD_JOINTS]
         
         # Extract X and Y coordinates for each joint
         joint_coords = {joint: {'x': [], 'y': []} for joint in joint_names}
@@ -164,7 +193,7 @@ class StabilityMetrics:
             x_coords = joint_coords[joint_name]['x']
             y_coords = joint_coords[joint_name]['y']
             
-            if x_coords and y_coords:
+            if x_coords and y_coords and len(x_coords) > 1:
                 dev_x[joint_name] = np.std(x_coords)
                 dev_y[joint_name] = np.std(y_coords)
             else:
@@ -214,16 +243,16 @@ class StabilityMetrics:
         """
         # Validate inputs
         if not joint_history:
-            print("Warning: Empty joint history provided")
+            logger.warning("Empty joint history provided")
             return 0.1
         
         # Validate shot_time - if not provided, use a reasonable default
         if shot_time is None:
-            print("Warning: No shot time provided, using last frame timestamp - 1.0s")
+            logger.warning("No shot time provided, using last frame timestamp - 1.0s")
             try:
                 shot_time = joint_history[-1]['timestamp'] - 1.0
             except (KeyError, IndexError):
-                print("Error: Cannot determine shot time from joint history")
+                logger.error("Cannot determine shot time from joint history")
                 return 0.1
         
         # Extract only post-shot frames [shot_time, shot_time + post_window]
@@ -234,12 +263,12 @@ class StabilityMetrics:
                 if shot_time <= frame_time <= shot_time + post_window:
                     post_shot_frames.append(frame)
             except (KeyError, TypeError) as e:
-                print(f"Warning: Error extracting timestamp from frame: {e}")
+                logger.warning(f"Error extracting timestamp from frame: {e}")
                 continue
         
         # Check if we have enough frames in post-shot window
         if len(post_shot_frames) < 2:
-            print(f"Warning: Not enough frames in post-shot window ({len(post_shot_frames)} frames). Need at least 2.")
+            logger.warning(f"Not enough frames in post-shot window ({len(post_shot_frames)} frames). Need at least 2.")
             # IMPORTANT: Return a low score instead of using the entire history
             # This ensures we don't falsely evaluate follow-through when we have insufficient data
             return 0.2
@@ -316,7 +345,7 @@ class StabilityMetrics:
                         group_movement += movement_rate
                         group_count += 1
                     except (KeyError, TypeError, ZeroDivisionError) as e:
-                        print(f"Warning: Error calculating movement for {joint_name}: {e}")
+                        logger.warning(f"Error calculating movement for {joint_name}: {e}")
                         continue
                 
                 # Add the average movement for this group
